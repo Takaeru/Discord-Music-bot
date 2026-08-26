@@ -1,0 +1,36 @@
+services:
+  lavalink:
+    image: performanc/nodelink:latest
+    container_name: lavalink-server
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - ./nodelink-config.js:/app/config.js
+    ports:
+      - "3000:3000"
+
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: discord-music-bot
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      - lavalink
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LAVALINK_HOST=${LAVALINK_HOST:-lavalink}
+      - LAVALINK_PORT=${LAVALINK_PORT:-3000}
+      - LAVALINK_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
+      - LAVALINK_SECURE=${LAVALINK_SECURE:-false}
+      - FFMPEG_PATH=ffmpeg
+      - YTDLP_PATH=yt-dlp
