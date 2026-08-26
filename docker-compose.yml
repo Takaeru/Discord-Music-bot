@@ -11,3 +11,14 @@ services:
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - RUST_LOG=${RUST_LOG:-info}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    # Standalone Compose limit fallbacks
+    mem_limit: 256M
+    cpus: 0.75
