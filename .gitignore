@@ -23,7 +23,7 @@ cover.out
 *.swp
 *.swo
 *~
-
+application.dev.yml
 # OS specific files
 .DS_Store
 Thumbs.db
