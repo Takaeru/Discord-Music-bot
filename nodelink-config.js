@@ -28,13 +28,36 @@ const config = {
           'Web'
         ]
       }
-    }
+    },
+    // Disable background probe sources to save CPU and RAM
+    monochrome: { ...defaultConfig.sources.monochrome, enabled: false },
+    instagram: { ...defaultConfig.sources.instagram, enabled: false },
+    twitter: { ...defaultConfig.sources.twitter, enabled: false },
+    tiktok: { ...defaultConfig.sources.tiktok, enabled: false },
+    reddit: { ...defaultConfig.sources.reddit, enabled: false },
+    tumblr: { ...defaultConfig.sources.tumblr, enabled: false },
+    bilibili: { ...defaultConfig.sources.bilibili, enabled: false },
+    nicovideo: { ...defaultConfig.sources.nicovideo, enabled: false },
+    flowery: { ...defaultConfig.sources.flowery, enabled: false },
+    lazypytts: { ...defaultConfig.sources.lazypytts, enabled: false },
+    'google-tts': { ...defaultConfig.sources['google-tts'], enabled: false },
+    pipertts: { ...defaultConfig.sources.pipertts, enabled: false },
+    pandora: { ...defaultConfig.sources.pandora, enabled: false },
+    tidal: { ...defaultConfig.sources.tidal, enabled: false },
+    qobuz: { ...defaultConfig.sources.qobuz, enabled: false },
+    lastfm: { ...defaultConfig.sources.lastfm, enabled: false },
+    netease: { ...defaultConfig.sources.netease, enabled: false },
+    letrasmus: { ...defaultConfig.sources.letrasmus, enabled: false },
+    yandexmusic: { ...defaultConfig.sources.yandexmusic, enabled: false },
+    googledrive: { ...defaultConfig.sources.googledrive, enabled: false },
+    kwai: { ...defaultConfig.sources.kwai, enabled: false },
+    audius: { ...defaultConfig.sources.audius, enabled: false }
   },
   audio: {
     ...defaultConfig.audio,
     quality: 'high',
     encryption: 'aead_aes256_gcm_rtpsize',
-    resamplingQuality: 'best',
+    resamplingQuality: 'fastest',
     lookaheadMs: 5
   }
 }
