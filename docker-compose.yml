@@ -8,6 +8,8 @@ services:
         limits:
           cpus: '0.75'
           memory: 512M
+    environment:
+      - CLUSTER_ENABLED=false
     volumes:
       - ./nodelink-config.js:/app/config.js
     ports:
