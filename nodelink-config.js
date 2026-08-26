@@ -6,9 +6,9 @@ const config = {
     ...defaultConfig.server,
     port: 3000,
     password: 'youshallnotpass',
-    bufferDurationMs: 5000,
-    frameBufferDurationMs: 15000,
-    trackStuckThresholdMs: 30000
+    bufferDurationMs: 10000,
+    frameBufferDurationMs: 20000,
+    trackStuckThresholdMs: 50000
   },
   cluster: {
     ...defaultConfig.cluster,
