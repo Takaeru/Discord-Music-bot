@@ -182,6 +182,22 @@ pub async fn handle_leave(ctx: &Context, command: &CommandInteraction, queue_mgr
     }
 }
 
+pub async fn handle_shuffle(ctx: &Context, command: &CommandInteraction, queue_mgr: &Arc<QueueManager>) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    let is_shuffled = queue_mgr.toggle_shuffle(guild_id).await;
+    let msg = if is_shuffled {
+        "🔀 Random / Shuffle mode **enabled**! Upcoming tracks have been randomized."
+    } else {
+        "➡️ Random / Shuffle mode **disabled**."
+    };
+
+    let _ = send_response(ctx, command, msg, false).await;
+}
+
 pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
     let embed = CreateEmbed::new()
         .title("📖 Discord Music Bot - Help Guide")
@@ -190,9 +206,10 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("⏸️ `/pause`", "Pause currently playing song", true)
         .field("▶️ `/resume`", "Resume paused playback", true)
         .field("⏭️ `/skip`", "Skip to the next song", true)
+        .field("🔀 `/shuffle`", "Toggle random / shuffle mode on or off", true)
         .field("🔁 `/repeat <mode>`", "Repeat mode: `off`, `track` (1 song), or `queue`", true)
         .field("⏹️ `/stop`", "Stop music and clear queue", true)
-        .field("📋 `/queue`", "View current song list", true)
+        .field("📋 `/queue`", "View interactive song list & controls", true)
         .field("📻 `/nowplaying`", "Show currently playing track info", true)
         .field("🔊 `/volume <0-100>`", "Set volume level", true)
         .field("👋 `/leave`", "Disconnect bot from voice", true)

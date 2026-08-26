@@ -1,3 +1,5 @@
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serenity::all::GuildId;
 use std::collections::{HashMap, VecDeque};
@@ -36,6 +38,7 @@ impl LoopMode {
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
+    shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
 }
 
 impl QueueManager {
@@ -43,6 +46,7 @@ impl QueueManager {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
+            shuffled: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -55,10 +59,23 @@ impl QueueManager {
         if tracks.is_empty() {
             return;
         }
+        let is_shuffled = self.get_shuffle(guild_id).await;
         let mut map = self.queues.lock().await;
         let queue = map.entry(guild_id).or_default();
+        let start_len = queue.len();
+
         for track in tracks {
             queue.push_back(track);
+        }
+
+        // If shuffle is active, shuffle the newly added items
+        if is_shuffled && queue.len() > 1 {
+            let mut rng = thread_rng();
+            let slice = queue.make_contiguous();
+            let shuffle_start = if start_len == 0 { 1 } else { start_len };
+            if shuffle_start < slice.len() {
+                slice[shuffle_start..].shuffle(&mut rng);
+            }
         }
     }
 
@@ -84,6 +101,31 @@ impl QueueManager {
         map.insert(guild_id, mode);
     }
 
+    pub async fn get_shuffle(&self, guild_id: GuildId) -> bool {
+        let map = self.shuffled.lock().await;
+        map.get(&guild_id).copied().unwrap_or(false)
+    }
+
+    pub async fn toggle_shuffle(&self, guild_id: GuildId) -> bool {
+        let mut shuf_map = self.shuffled.lock().await;
+        let is_shuffled = shuf_map.get(&guild_id).copied().unwrap_or(false);
+        let new_state = !is_shuffled;
+        shuf_map.insert(guild_id, new_state);
+
+        if new_state {
+            let mut q_map = self.queues.lock().await;
+            if let Some(queue) = q_map.get_mut(&guild_id) {
+                if queue.len() > 2 {
+                    let mut rng = thread_rng();
+                    let slice = queue.make_contiguous();
+                    slice[1..].shuffle(&mut rng);
+                }
+            }
+        }
+
+        new_state
+    }
+
     pub async fn advance(&self, guild_id: GuildId) -> Option<TrackMetadata> {
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
@@ -95,10 +137,30 @@ impl QueueManager {
     }
 
     pub async fn cycle_queue(&self, guild_id: GuildId) -> Option<TrackMetadata> {
+        let is_shuffled = self.get_shuffle(guild_id).await;
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
             if let Some(front) = queue.pop_front() {
                 queue.push_back(front);
+                if is_shuffled && queue.len() > 2 {
+                    let mut rng = thread_rng();
+                    let slice = queue.make_contiguous();
+                    slice[1..].shuffle(&mut rng);
+                }
+                queue.front().cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub async fn jump_to(&self, guild_id: GuildId, index: usize) -> Option<TrackMetadata> {
+        let mut map = self.queues.lock().await;
+        if let Some(queue) = map.get_mut(&guild_id) {
+            if index < queue.len() {
+                queue.drain(0..index);
                 queue.front().cloned()
             } else {
                 None
@@ -113,5 +175,7 @@ impl QueueManager {
         map.remove(&guild_id);
         let mut loop_map = self.loop_modes.lock().await;
         loop_map.remove(&guild_id);
+        let mut shuf_map = self.shuffled.lock().await;
+        shuf_map.remove(&guild_id);
     }
 }

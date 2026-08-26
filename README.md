@@ -18,10 +18,12 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
   - **YouTube**: Direct video URLs, search queries, playlists, and YouTube Mix/Radio links (`&list=RD...`).
   - **Spotify**: Tracks, albums, and playlists resolved with high-res album art and matched audio streams.
   - **SoundCloud**: Tracks and artist searches supported.
-- 🎨 **Dynamic Rich Embeds**:
-  - Platform-colored embeds (Spotify Green, YouTube Red, SoundCloud Orange).
-  - Official platform logo images in Author & Footer icons, plus high-res track thumbnails.
-  - Clean `/queue` view with Now Playing highlight, track positions, total duration, and optional custom emoji logos.
+- 🎨 **Dynamic Rich Embeds & Interactive Controls**:
+  - Platform-colored embeds (Spotify Green, YouTube Red, SoundCloud Orange) with high-res thumbnails.
+  - **Interactive `/queue`**:
+    - 📑 **Pagination Buttons**: `◀️ Prev`, `Page X/Y`, `Next ▶️` to browse through large queues smoothly.
+    - 🎵 **Direct Song Selection (Select Menu)**: Jump directly to any track in the queue by choosing from a dropdown list without typing commands.
+    - 🎛️ **Quick Controls**: Built-in `⏭️ Skip` and `⏹️ Stop` buttons directly on the queue embed.
 - 🔁 **Flexible Repeat Modes**: Loop a single track (`/repeat mode:track`) or cycle the entire queue indefinitely (`/repeat mode:queue`).
 - 🛡️ **Smart Playlist Capping**: Playlists and Mixes are capped at 20 tracks to prevent queue overload and keep memory footprint low.
 - 🎛️ **Full Audio Codec Support**: AAC, M4A/ISOMP4, MP3, WebM/MKV, Opus, FLAC, Vorbis via pure Rust Symphonia.
@@ -37,6 +39,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/pause` | Pause currently playing track | `/pause` |
 | `/resume` | Resume playback of paused track | `/resume` |
 | `/skip` | Skip to the next track in queue | `/skip` |
+| `/shuffle` | Toggle random / shuffle mode on or off | `/shuffle` |
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
 | `/stop` | Stop playback and clear the queue | `/stop` |

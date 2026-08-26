@@ -4,7 +4,7 @@ use serenity::all::{
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::commands::{handle_command, register_commands};
+use crate::commands::{handle_command, handle_component, register_commands};
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
 
@@ -31,9 +31,16 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::Command(command) = interaction {
-            info!("Handling slash command: /{}", command.data.name);
-            handle_command(&ctx, &command, &self.source_mgr, &self.queue_mgr).await;
+        match interaction {
+            Interaction::Command(command) => {
+                info!("Handling slash command: /{}", command.data.name);
+                handle_command(&ctx, &command, &self.source_mgr, &self.queue_mgr).await;
+            }
+            Interaction::Component(component) => {
+                info!("Handling component interaction: {}", component.data.custom_id);
+                handle_component(&ctx, &component, &self.source_mgr, &self.queue_mgr).await;
+            }
+            _ => {}
         }
     }
 }

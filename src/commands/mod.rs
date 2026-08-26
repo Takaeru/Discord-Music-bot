@@ -4,7 +4,8 @@ pub mod play;
 pub mod queue;
 
 use serenity::all::{
-    CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
+    CommandInteraction, CommandOptionType, ComponentInteraction, Context, CreateCommand,
+    CreateCommandOption,
 };
 use std::sync::Arc;
 
@@ -13,11 +14,11 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_help, handle_leave, handle_pause, handle_repeat, handle_resume, handle_skip,
-    handle_stop, handle_volume,
+    handle_help, handle_leave, handle_pause, handle_repeat, handle_resume, handle_shuffle,
+    handle_skip, handle_stop, handle_volume,
 };
 use self::play::handle_play;
-use self::queue::{handle_nowplaying, handle_queue};
+use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
 pub fn register_commands() -> Vec<CreateCommand> {
     vec![
@@ -37,6 +38,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
         CreateCommand::new("stop").description("Stop playback and clear the queue"),
         CreateCommand::new("queue").description("View the current music queue"),
         CreateCommand::new("nowplaying").description("Show details of the currently playing track"),
+        CreateCommand::new("shuffle").description("Toggle random / shuffle mode for the queue"),
         CreateCommand::new("repeat")
             .description("Set repeat / loop mode (off, track, queue)")
             .add_option(
@@ -96,6 +98,7 @@ pub async fn handle_command(
         "stop" => handle_stop(ctx, command, queue_mgr).await,
         "queue" => handle_queue(ctx, command, queue_mgr).await,
         "nowplaying" => handle_nowplaying(ctx, command, queue_mgr).await,
+        "shuffle" => handle_shuffle(ctx, command, queue_mgr).await,
         "repeat" | "loop" => handle_repeat(ctx, command, queue_mgr).await,
         "volume" => handle_volume(ctx, command).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
@@ -103,5 +106,18 @@ pub async fn handle_command(
         _ => {
             let _ = send_response(ctx, command, "⚠️ Unknown command.", false).await;
         }
+    }
+}
+
+pub async fn handle_component(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let custom_id = component.data.custom_id.as_str();
+
+    if custom_id.starts_with("queue_") {
+        handle_queue_component(ctx, component, source_mgr, queue_mgr).await;
     }
 }
