@@ -63,29 +63,46 @@ impl SourceManager {
         if is_spotify {
             info!("Resolving Spotify URL: {}", query);
             let spotify_items = self.resolve_spotify_items(query).await?;
-            let mut resolved_tracks = Vec::new();
-
-            for item in spotify_items {
-                let search = format!("{} - {}", item.artist, item.title);
-                info!("Matching audio for Spotify track: {}", search);
-
-                if let Ok(yt_tracks) = self.resolve_single_query(&search).await {
-                    if let Some(yt) = yt_tracks.into_iter().next() {
-                        resolved_tracks.push(TrackMetadata {
-                            title: item.title,
-                            url: item.url,
-                            stream_url: yt.stream_url,
-                            duration: item.duration.or(yt.duration),
-                            thumbnail: item.thumbnail.or(yt.thumbnail),
-                            author: Some(item.artist),
-                            source: "Spotify".to_string(),
-                        });
-                    }
-                }
+            if spotify_items.is_empty() {
+                return Err("Could not extract tracks from Spotify link.".to_string());
             }
 
-            if resolved_tracks.is_empty() {
-                return Err("Could not find playable audio for the Spotify link.".to_string());
+            let mut resolved_tracks = Vec::new();
+
+            // Resolve the first track immediately so it can play instantly
+            let first = &spotify_items[0];
+            let first_search = format!("{} - {}", first.artist, first.title);
+            let first_yt = self.resolve_single_query(&first_search).await
+                .ok()
+                .and_then(|v| v.into_iter().next());
+
+            let first_stream = match first_yt {
+                Some(ref yt) => yt.stream_url.clone(),
+                None => format!("ytsearch1:{}", first_search),
+            };
+
+            resolved_tracks.push(TrackMetadata {
+                title: first.title.clone(),
+                url: first.url.clone(),
+                stream_url: first_stream,
+                duration: first.duration.or(first_yt.as_ref().and_then(|y| y.duration)),
+                thumbnail: first.thumbnail.clone().or(first_yt.as_ref().and_then(|y| y.thumbnail.clone())),
+                author: Some(first.artist.clone()),
+                source: "Spotify".to_string(),
+            });
+
+            // For the remaining tracks in the playlist, defer audio resolution until playback
+            for item in spotify_items.into_iter().skip(1) {
+                let search = format!("ytsearch1:{} - {}", item.artist, item.title);
+                resolved_tracks.push(TrackMetadata {
+                    title: item.title,
+                    url: item.url,
+                    stream_url: search,
+                    duration: item.duration,
+                    thumbnail: item.thumbnail,
+                    author: Some(item.artist),
+                    source: "Spotify".to_string(),
+                });
             }
 
             return Ok(resolved_tracks);
