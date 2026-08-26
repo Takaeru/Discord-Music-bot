@@ -46,6 +46,11 @@ impl SourceManager {
         Self {
             http_client: reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .tcp_keepalive(Some(Duration::from_secs(30)))
+                .pool_idle_timeout(Some(Duration::from_secs(120)))
+                .pool_max_idle_per_host(20)
+                .timeout(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
         }
@@ -366,6 +371,12 @@ impl SourceManager {
                     "acodec:opus,acodec:mp3,proto:https",
                     "-f",
                     "bestaudio[acodec=opus]/bestaudio[ext=webm]/http_mp3_128/bestaudio[ext=mp3]/bestaudio[acodec!=aac]/bestaudio/best",
+                    "--socket-timeout",
+                    "20",
+                    "--retries",
+                    "10",
+                    "--fragment-retries",
+                    "10",
                     "--no-warnings",
                     &target,
                 ])
@@ -384,14 +395,25 @@ impl SourceManager {
         .map_err(|e| format!("Task join error: {}", e))?
     }
 
-    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback.
+    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback with pre-buffering.
     pub async fn create_input(&self, url: &str) -> Input {
-        if let Ok(direct_url) = self.extract_direct_stream(url).await {
+        let input: Input = if let Ok(direct_url) = self.extract_direct_stream(url).await {
             info!("Playing via direct progressive audio stream (Opus/MP3): {}", direct_url.split('?').next().unwrap_or(&direct_url));
             HttpRequest::new(self.http_client.clone(), direct_url).into()
         } else {
             info!("Playing via YoutubeDl fallback for: {}", url);
             YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
+        };
+
+        match input
+            .make_playable_async(symphonia::default::get_codecs(), symphonia::default::get_probe())
+            .await
+        {
+            Ok(playable) => playable,
+            Err(e) => {
+                error!("Failed to prepare playable input buffer: {:?}", e);
+                YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
+            }
         }
     }
 }

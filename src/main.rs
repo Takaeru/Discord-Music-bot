@@ -2,6 +2,7 @@ mod commands;
 mod handler;
 mod queue;
 mod source;
+mod utils;
 
 use handler::Handler;
 use queue::QueueManager;
@@ -44,9 +45,12 @@ async fn main() {
         queue_mgr,
     };
 
+    let songbird_config = songbird::Config::default().preallocated_tracks(4);
+    let songbird_voice = songbird::Songbird::serenity_from_config(songbird_config);
+
     let mut client = Client::builder(&token, intents)
         .event_handler(handler)
-        .register_songbird()
+        .register_songbird_with(songbird_voice)
         .await
         .expect("Error creating Discord client");
 

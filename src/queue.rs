@@ -35,7 +35,6 @@ impl LoopMode {
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
-    current: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
 }
 
@@ -43,17 +42,11 @@ impl QueueManager {
     pub fn new() -> Self {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
-            current: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub async fn push_track(&self, guild_id: GuildId, track: TrackMetadata) {
-        let mut curr_map = self.current.lock().await;
-        if !curr_map.contains_key(&guild_id) {
-            curr_map.insert(guild_id, track.clone());
-        }
-
         let mut map = self.queues.lock().await;
         map.entry(guild_id).or_default().push_back(track);
     }
@@ -62,12 +55,6 @@ impl QueueManager {
         if tracks.is_empty() {
             return;
         }
-
-        let mut curr_map = self.current.lock().await;
-        if !curr_map.contains_key(&guild_id) {
-            curr_map.insert(guild_id, tracks[0].clone());
-        }
-
         let mut map = self.queues.lock().await;
         let queue = map.entry(guild_id).or_default();
         for track in tracks {
@@ -76,13 +63,15 @@ impl QueueManager {
     }
 
     pub async fn get_current(&self, guild_id: GuildId) -> Option<TrackMetadata> {
-        let map = self.current.lock().await;
-        map.get(&guild_id).cloned()
+        let map = self.queues.lock().await;
+        map.get(&guild_id).and_then(|q| q.front().cloned())
     }
 
     pub async fn get_queue(&self, guild_id: GuildId) -> Vec<TrackMetadata> {
         let map = self.queues.lock().await;
-        map.get(&guild_id).map(|q| q.iter().cloned().collect()).unwrap_or_default()
+        map.get(&guild_id)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub async fn get_loop_mode(&self, guild_id: GuildId) -> LoopMode {
@@ -99,14 +88,7 @@ impl QueueManager {
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
             queue.pop_front();
-            let next = queue.front().cloned();
-            let mut curr_map = self.current.lock().await;
-            if let Some(track) = &next {
-                curr_map.insert(guild_id, track.clone());
-            } else {
-                curr_map.remove(&guild_id);
-            }
-            next
+            queue.front().cloned()
         } else {
             None
         }
@@ -115,8 +97,6 @@ impl QueueManager {
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
-        let mut curr_map = self.current.lock().await;
-        curr_map.remove(&guild_id);
         let mut loop_map = self.loop_modes.lock().await;
         loop_map.remove(&guild_id);
     }
