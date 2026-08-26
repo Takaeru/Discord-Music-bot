@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./application.yml:/opt/Lavalink/application.yml
-      - ./plugins:/opt/Lavalink/plugins
     ports:
       - "2333:2333"
 
