@@ -195,7 +195,7 @@ impl SourceManager {
                             } else {
                                 // Playlist or Album
                                 if let Some(track_list) = entity_obj.get("trackList").and_then(|t| t.as_array()) {
-                                    for track in track_list.iter().take(50) {
+                                    for track in track_list.iter().take(20) {
                                         let title = track.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let subtitle = track.get("subtitle").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let duration = track.get("duration").and_then(|d| d.as_u64()).map(Duration::from_millis);
@@ -234,8 +234,7 @@ impl SourceManager {
     /// Resolves YouTube, SoundCloud, or direct URLs via yt-dlp.
     async fn resolve_single_query(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_url = query.starts_with("http://") || query.starts_with("https://");
-        let is_pure_playlist = is_url && (query.contains("/playlist?list=") || query.contains("&list=PL") || query.contains("?list=PL"));
-        let is_watch_url = is_url && (query.contains("watch?v=") || query.contains("youtu.be/"));
+        let has_playlist = is_url && query.contains("list=");
 
         let source_hint = if query.contains("soundcloud.com") {
             "SoundCloud"
@@ -262,12 +261,11 @@ impl SourceManager {
                 "--no-warnings",
             ]);
 
-            // If it's a single video link with a mix/radio attached (&list=RD...), don't extract the whole 900+ radio mix
-            if is_watch_url && !is_pure_playlist {
+            if has_playlist {
+                // Limit playlist or mix to maximum 20 tracks
+                cmd.args(["--flat-playlist", "--playlist-end", "20"]);
+            } else if is_url {
                 cmd.arg("--no-playlist");
-            } else if is_pure_playlist {
-                // Limit playlists to maximum 50 tracks to prevent queue overload
-                cmd.args(["--flat-playlist", "--playlist-end", "50"]);
             } else {
                 cmd.arg("--flat-playlist");
             }
@@ -292,9 +290,9 @@ impl SourceManager {
         let mut tracks = Vec::new();
 
         if let Some(entries) = parsed.entries {
-            if is_pure_playlist || (is_url && parsed._type.as_deref() == Some("playlist") && !is_watch_url) {
-                // Return all tracks in playlist (capped at 50)
-                for entry in entries.into_iter().take(50) {
+            if has_playlist || (is_url && parsed._type.as_deref() == Some("playlist")) {
+                // Return all tracks in playlist/mix (capped at 20)
+                for entry in entries.into_iter().take(20) {
                     if let Some(track) = Self::parse_single_entry(entry, source_hint) {
                         tracks.push(track);
                     }

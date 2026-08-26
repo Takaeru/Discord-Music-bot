@@ -20,9 +20,9 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
   - Official platform logo images in Author & Footer icons, plus high-res track thumbnails.
   - Clean `/queue` view with Now Playing highlight, track positions, total duration, and optional custom emoji logos.
 - 🔁 **Flexible Repeat Modes**: Loop a single track (`/repeat mode:track`) or cycle the entire queue indefinitely (`/repeat mode:queue`).
-- 🛡️ **Smart Playlist Protection**:
-  - YouTube Mix links (`&list=RD...`) only queue the targeted song.
-  - Large playlists automatically capped at 50 songs to prevent queue overflow.
+- 🛡️ **Smart Playlist & Mix Support**:
+  - Full support for YouTube Playlists and YouTube Mix/Radio links (`&list=RD...`).
+  - Playlists automatically capped at 20 tracks to prevent queue overload and keep memory footprint low.
 - 🎛️ **Full Audio Codec Support**: AAC, M4A/ISOMP4, MP3, WebM/MKV, Opus, FLAC, Vorbis via pure Rust Symphonia.
 - 🐳 **Single Standalone Docker Container**: Zero external services needed (Lavalink, NodeLink, Java, and NodeJS eliminated).
 
