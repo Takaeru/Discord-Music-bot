@@ -7,25 +7,12 @@ const config = {
     port: 3000,
     password: 'youshallnotpass',
     bufferDurationMs: 10000,
-    frameBufferDurationMs: 20000,
-    trackStuckThresholdMs: 50000
+    frameBufferDurationMs: 25000,
+    trackStuckThresholdMs: 60000
   },
   cluster: {
     ...defaultConfig.cluster,
-    enabled: true,
-    workers: 1,
-    minWorkers: 1,
-    hibernation: {
-      enabled: false,
-      timeoutMs: 1200000
-    },
-    specializedSourceWorker: {
-      ...defaultConfig.cluster?.specializedSourceWorker,
-      enabled: true,
-      count: 1,
-      microWorkers: 2,
-      silentLogs: true
-    }
+    enabled: false
   },
   sources: {
     ...defaultConfig.sources,
@@ -35,10 +22,10 @@ const config = {
       allowItag: [251, 140, 250, 249],
       clients: {
         ...defaultConfig.sources.youtube.clients,
-        search: ['Web', 'Android', 'TVCast'],
+        search: ['Web', 'Android', 'IOS'],
         playback: [
-          'TVCast',
           'IOS',
+          'TVCast',
           'WebEmbedded',
           'WebParentTools',
           'AndroidVR',
@@ -52,14 +39,14 @@ const config = {
     quality: 'high',
     encryption: 'aead_xchacha20_poly1305_rtpsize',
     resamplingQuality: 'fastest',
-    lookaheadMs: 50,
+    lookaheadMs: 250,
     crossfade: {
       enabled: false,
       duration: 0,
       curve: 'sinusoidal',
       mode: 'preload',
-      minBufferMs: 2000,
-      bufferMs: 5000
+      minBufferMs: 5000,
+      bufferMs: 10000
     }
   }
 }
