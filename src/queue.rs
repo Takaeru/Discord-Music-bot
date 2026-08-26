@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serenity::all::GuildId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -5,10 +6,37 @@ use tokio::sync::Mutex;
 
 use crate::source::TrackMetadata;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LoopMode {
+    #[default]
+    Off,
+    Track,
+    Queue,
+}
+
+impl LoopMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LoopMode::Off => "Off",
+            LoopMode::Track => "Track (1 Song)",
+            LoopMode::Queue => "Entire Queue",
+        }
+    }
+
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            LoopMode::Off => "➡️",
+            LoopMode::Track => "🔂",
+            LoopMode::Queue => "🔁",
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     current: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
+    loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
 }
 
 impl QueueManager {
@@ -16,6 +44,7 @@ impl QueueManager {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
             current: Arc::new(Mutex::new(HashMap::new())),
+            loop_modes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -56,6 +85,16 @@ impl QueueManager {
         map.get(&guild_id).map(|q| q.iter().cloned().collect()).unwrap_or_default()
     }
 
+    pub async fn get_loop_mode(&self, guild_id: GuildId) -> LoopMode {
+        let map = self.loop_modes.lock().await;
+        map.get(&guild_id).copied().unwrap_or_default()
+    }
+
+    pub async fn set_loop_mode(&self, guild_id: GuildId, mode: LoopMode) {
+        let mut map = self.loop_modes.lock().await;
+        map.insert(guild_id, mode);
+    }
+
     pub async fn advance(&self, guild_id: GuildId) -> Option<TrackMetadata> {
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
@@ -78,5 +117,7 @@ impl QueueManager {
         map.remove(&guild_id);
         let mut curr_map = self.current.lock().await;
         curr_map.remove(&guild_id);
+        let mut loop_map = self.loop_modes.lock().await;
+        loop_map.remove(&guild_id);
     }
 }

@@ -11,6 +11,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 - ⚡ **Ultra Lightweight**: Consumes only **~5-10 MB RAM** and **<0.25% CPU** (compared to Java/Lavalink taking 500MB+).
 - 🔒 **DAVE / E2EE Compliant**: Fully compatible with Discord's mandatory voice end-to-end encryption protocol.
 - 🔓 **No YouTube Login/Session Required**: Works out of the box without cookies, OAuth, or YouTube account sessions.
+- 🔁 **Flexible Repeat Modes**: Loop a single track (`/repeat mode:track`) or cycle the entire queue indefinitely (`/repeat mode:queue`).
 - 🎼 **Multi-Source & Smart Playlists**:
   - Direct YouTube links, searches, mixes, and playlists.
   - Smart `--no-playlist` protection: single video links with YouTube Mix (`&list=RD...`) attached will only queue the targeted song.
@@ -28,9 +29,11 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/pause` | Pause currently playing track | `/pause` |
 | `/resume` | Resume paused track | `/resume` |
 | `/skip` | Skip to the next track in queue | `/skip` |
+| `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
+| `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
 | `/stop` | Stop playback and clear the queue | `/stop` |
-| `/queue` | View current queue list and total duration | `/queue` |
-| `/nowplaying` | Show details and playback status | `/nowplaying` |
+| `/queue` | View current queue list, repeat mode, and total duration | `/queue` |
+| `/nowplaying` | Show details, playback status, and active loop mode | `/nowplaying` |
 | `/volume <1-200>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/help` | Show command overview and usage | `/help` |
@@ -110,7 +113,7 @@ discord-bot/
 └── src/
     ├── main.rs       # Bot entrypoint & Gateway connection
     ├── handler.rs    # Serenity interaction handler & Slash command registration
-    ├── commands.rs   # Music slash commands (/play, /queue, /volume, etc.)
+    ├── commands.rs   # Music slash commands (/play, /repeat, /queue, /volume, etc.)
     ├── source.rs     # Metadata extraction, yt-dlp parsing & playlist filters
-    └── queue.rs      # Guild queue state & track metadata manager
+    └── queue.rs      # Guild queue state & LoopMode manager
 ```

@@ -1,20 +1,62 @@
+use serenity::async_trait;
 use serenity::all::{
     Color, CommandDataOptionValue, CommandInteraction, Context, CreateCommand,
-    CreateCommandOption, CreateEmbed, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateInteractionResponseFollowup,
-    CommandOptionType,
+    CreateCommandOption, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
+    CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateInteractionResponseFollowup, CommandOptionType, GuildId,
+};
+use songbird::{
+    events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
+    Call,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 
-use crate::queue::QueueManager;
-use crate::source::SourceManager;
+use crate::queue::{LoopMode, QueueManager};
+use crate::source::{SourceManager, TrackMetadata};
+
+struct TrackEndHandler {
+    guild_id: GuildId,
+    track: TrackMetadata,
+    queue_mgr: Arc<QueueManager>,
+    source_mgr: Arc<SourceManager>,
+    call_lock: Arc<tokio::sync::Mutex<Call>>,
+}
+
+#[async_trait]
+impl VoiceEventHandler for TrackEndHandler {
+    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+        let mode = self.queue_mgr.get_loop_mode(self.guild_id).await;
+        if mode == LoopMode::Queue {
+            // Re-enqueue the finished track to the back of the queue
+            let mut handler = self.call_lock.lock().await;
+            let input = self.source_mgr.create_input(&self.track.stream_url);
+            let next_handle = handler.enqueue_input(input).await;
+            let _ = next_handle.set_volume(0.8);
+
+            let _ = next_handle.add_event(
+                Event::Track(TrackEvent::End),
+                TrackEndHandler {
+                    guild_id: self.guild_id,
+                    track: self.track.clone(),
+                    queue_mgr: self.queue_mgr.clone(),
+                    source_mgr: self.source_mgr.clone(),
+                    call_lock: self.call_lock.clone(),
+                },
+            );
+
+            self.queue_mgr.push_track(self.guild_id, self.track.clone()).await;
+        }
+        self.queue_mgr.advance(self.guild_id).await;
+        None
+    }
+}
 
 pub fn register_commands() -> Vec<CreateCommand> {
     vec![
         CreateCommand::new("play")
-            .description("Play audio from YouTube, SoundCloud, Spotify, or search query")
+            .description("Play audio from YouTube, Spotify, SoundCloud, or search query")
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::String,
@@ -29,6 +71,32 @@ pub fn register_commands() -> Vec<CreateCommand> {
         CreateCommand::new("stop").description("Stop playback and clear the queue"),
         CreateCommand::new("queue").description("View the current music queue"),
         CreateCommand::new("nowplaying").description("Show details of the currently playing track"),
+        CreateCommand::new("repeat")
+            .description("Set repeat / loop mode (off, track, queue)")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "mode",
+                    "Loop mode: off, track (1 song), or queue (entire list)",
+                )
+                .add_string_choice("off", "off")
+                .add_string_choice("track (1 song)", "track")
+                .add_string_choice("queue (all songs)", "queue")
+                .required(true),
+            ),
+        CreateCommand::new("loop")
+            .description("Set repeat / loop mode (off, track, queue)")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "mode",
+                    "Loop mode: off, track (1 song), or queue (entire list)",
+                )
+                .add_string_choice("off", "off")
+                .add_string_choice("track (1 song)", "track")
+                .add_string_choice("queue (all songs)", "queue")
+                .required(true),
+            ),
         CreateCommand::new("volume")
             .description("Adjust playback volume (0 - 100)")
             .add_option(
@@ -62,6 +130,7 @@ pub async fn handle_command(
         "stop" => handle_stop(ctx, command, queue_mgr).await,
         "queue" => handle_queue(ctx, command, queue_mgr).await,
         "nowplaying" => handle_nowplaying(ctx, command, queue_mgr).await,
+        "repeat" | "loop" => handle_repeat(ctx, command, queue_mgr).await,
         "volume" => handle_volume(ctx, command).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "help" => handle_help(ctx, command).await,
@@ -142,25 +211,50 @@ async fn handle_play(
     };
 
     let mut handler = call_lock.lock().await;
+    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
 
     if resolved.len() == 1 {
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
 
-        let input = source_mgr.create_input(&track.url);
+        let input = source_mgr.create_input(&track.stream_url);
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
+
+        if loop_mode == LoopMode::Track {
+            let _ = track_handle.enable_loop();
+        }
+
+        let _ = track_handle.add_event(
+            Event::Track(TrackEvent::End),
+            TrackEndHandler {
+                guild_id,
+                track: track.clone(),
+                queue_mgr: queue_mgr.clone(),
+                source_mgr: source_mgr.clone(),
+                call_lock: call_lock.clone(),
+            },
+        );
 
         let duration_str = format_duration(track.duration);
         let author_str = track.author.as_deref().unwrap_or("Unknown Artist");
 
         let mut embed = CreateEmbed::new()
-            .title("🎶 Added to Queue")
-            .description(format!("[**{}**]({})", track.title, track.url))
+            .author(
+                CreateEmbedAuthor::new(format!("Playing from {}", track.source))
+                    .icon_url(source_icon_url(&track.source))
+                    .url(&track.url),
+            )
+            .title(&track.title)
+            .url(&track.url)
             .field("👤 Artist", author_str, true)
             .field("⏱️ Duration", duration_str, true)
             .field("📌 Position", format!("#{}", handler.queue().len()), true)
-            .color(Color::from_rgb(88, 101, 242));
+            .footer(
+                CreateEmbedFooter::new(format!("Platform: {}", track.source))
+                    .icon_url(source_icon_url(&track.source)),
+            )
+            .color(source_color(&track.source));
 
         if let Some(thumb) = &track.thumbnail {
             embed = embed.thumbnail(thumb);
@@ -172,20 +266,39 @@ async fn handle_play(
     } else {
         // Playlist handling
         let total_tracks = resolved.len();
+        let source_name = resolved[0].source.clone();
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
 
         for track in &resolved {
-            let input = source_mgr.create_input(&track.url);
+            let input = source_mgr.create_input(&track.stream_url);
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
+
+            let _ = track_handle.add_event(
+                Event::Track(TrackEvent::End),
+                TrackEndHandler {
+                    guild_id,
+                    track: track.clone(),
+                    queue_mgr: queue_mgr.clone(),
+                    source_mgr: source_mgr.clone(),
+                    call_lock: call_lock.clone(),
+                },
+            );
         }
 
         let embed = CreateEmbed::new()
-            .title("📑 Playlist Enqueued")
-            .description(format!("Successfully enqueued **{}** tracks from playlist.", total_tracks))
+            .author(
+                CreateEmbedAuthor::new(format!("{} Playlist Enqueued", source_name))
+                    .icon_url(source_icon_url(&source_name)),
+            )
+            .title(format!("Added {} tracks to queue", total_tracks))
             .field("📌 First Track", format!("[**{}**]({})", resolved[0].title, resolved[0].url), false)
             .field("📊 Queue Total", format!("{} tracks", handler.queue().len()), true)
-            .color(Color::from_rgb(59, 165, 93));
+            .footer(
+                CreateEmbedFooter::new(format!("Platform: {}", source_name))
+                    .icon_url(source_icon_url(&source_name)),
+            )
+            .color(source_color(&source_name));
 
         let _ = command
             .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
@@ -243,6 +356,8 @@ async fn handle_skip(ctx: &Context, command: &CommandInteraction, queue_mgr: &Ar
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
+            // Disable loop if track repeat was on so it can actually skip
+            let _ = current.disable_loop();
             let _ = current.stop();
             queue_mgr.advance(guild_id).await;
             let _ = send_response(ctx, command, "⏭️ Skipped current track.", false).await;
@@ -278,6 +393,7 @@ async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr: &A
     };
 
     let queue = queue_mgr.get_queue(guild_id).await;
+    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
 
     if queue.is_empty() {
         let _ = send_response(ctx, command, "📭 The queue is currently empty.", false).await;
@@ -288,7 +404,13 @@ async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr: &A
     for (i, track) in queue.iter().take(10).enumerate() {
         let pos = if i == 0 { "▶️ [Now Playing]".to_string() } else { format!("{}.", i) };
         let dur = format_duration(track.duration);
-        desc.push_str(&format!("`{}` **{}** (`{}`)\n", pos, track.title, dur));
+        let s_icon = match track.source.as_str() {
+            "Spotify" => "🟢",
+            "YouTube" => "🔴",
+            "SoundCloud" => "🟠",
+            _ => "🌐",
+        };
+        desc.push_str(&format!("`{}` {} [**{}**]({}) (`{}`)\n", pos, s_icon, track.title, track.url, dur));
     }
 
     if queue.len() > 10 {
@@ -299,6 +421,7 @@ async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr: &A
         .title("📋 Current Queue")
         .description(desc)
         .field("📊 Total Tracks", format!("{}", queue.len()), true)
+        .field("🔁 Repeat Mode", format!("{} {}", loop_mode.emoji(), loop_mode.as_str()), true)
         .color(Color::from_rgb(88, 101, 242));
 
     let _ = command
@@ -318,15 +441,26 @@ async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queue_mg
     };
 
     if let Some(current) = queue_mgr.get_current(guild_id).await {
+        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
         let author = current.author.as_deref().unwrap_or("Unknown Artist");
         let dur = format_duration(current.duration);
 
         let mut embed = CreateEmbed::new()
-            .title("📻 Now Playing")
-            .description(format!("[**{}**]({})", current.title, current.url))
+            .author(
+                CreateEmbedAuthor::new(format!("Now Playing ({})", current.source))
+                    .icon_url(source_icon_url(&current.source))
+                    .url(&current.url),
+            )
+            .title(&current.title)
+            .url(&current.url)
             .field("👤 Artist", author, true)
             .field("⏱️ Duration", dur, true)
-            .color(Color::from_rgb(235, 69, 158));
+            .field("🔁 Loop Mode", format!("{} {}", loop_mode.emoji(), loop_mode.as_str()), true)
+            .footer(
+                CreateEmbedFooter::new(format!("Platform: {}", current.source))
+                    .icon_url(source_icon_url(&current.source)),
+            )
+            .color(source_color(&current.source));
 
         if let Some(thumb) = &current.thumbnail {
             embed = embed.thumbnail(thumb);
@@ -339,10 +473,51 @@ async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queue_mg
                     CreateInteractionResponseMessage::new().embed(embed),
                 ),
             )
-            .await;
+        .await;
     } else {
         let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", false).await;
     }
+}
+
+async fn handle_repeat(ctx: &Context, command: &CommandInteraction, queue_mgr: &Arc<QueueManager>) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    let mode_str = match command.data.options.iter().find(|opt| opt.name == "mode") {
+        Some(opt) => match &opt.value {
+            CommandDataOptionValue::String(s) => s.as_str(),
+            _ => "off",
+        },
+        None => "off",
+    };
+
+    let mode = match mode_str {
+        "track" | "song" => LoopMode::Track,
+        "queue" => LoopMode::Queue,
+        _ => LoopMode::Off,
+    };
+
+    queue_mgr.set_loop_mode(guild_id, mode).await;
+
+    let manager = songbird::get(ctx).await.unwrap();
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let handler = handler_lock.lock().await;
+        if let Some(current) = handler.queue().current() {
+            match mode {
+                LoopMode::Track => {
+                    let _ = current.enable_loop();
+                }
+                LoopMode::Queue | LoopMode::Off => {
+                    let _ = current.disable_loop();
+                }
+            }
+        }
+    }
+
+    let msg = format!("{} Repeat mode set to **{}**", mode.emoji(), mode.as_str());
+    let _ = send_response(ctx, command, &msg, false).await;
 }
 
 async fn handle_volume(ctx: &Context, command: &CommandInteraction) {
@@ -407,6 +582,7 @@ async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("⏸️ `/pause`", "Pause currently playing song", true)
         .field("▶️ `/resume`", "Resume paused playback", true)
         .field("⏭️ `/skip`", "Skip to the next song", true)
+        .field("🔁 `/repeat <mode>`", "Repeat mode: `off`, `track` (1 song), or `queue`", true)
         .field("⏹️ `/stop`", "Stop music and clear queue", true)
         .field("📋 `/queue`", "View current song list", true)
         .field("📻 `/nowplaying`", "Show currently playing track info", true)
@@ -422,6 +598,24 @@ async fn handle_help(ctx: &Context, command: &CommandInteraction) {
             ),
         )
         .await;
+}
+
+fn source_icon_url(source: &str) -> &'static str {
+    match source {
+        "Spotify" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/spotify.png",
+        "YouTube" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/youtube.png",
+        "SoundCloud" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/soundcloud.png",
+        _ => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/audiobookshelf.png",
+    }
+}
+
+fn source_color(source: &str) -> Color {
+    match source {
+        "Spotify" => Color::from_rgb(30, 215, 96),   // Spotify Vibrant Green
+        "YouTube" => Color::from_rgb(255, 0, 0),     // YouTube Vibrant Red
+        "SoundCloud" => Color::from_rgb(255, 85, 0), // SoundCloud Orange
+        _ => Color::from_rgb(88, 101, 242),          // Discord Blurple
+    }
 }
 
 fn format_duration(dur: Option<Duration>) -> String {

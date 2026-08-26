@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
+    && mkdir -p /etc/yt-dlp /root/.config/yt-dlp /app/.config/yt-dlp \
+    && printf -- '--format-sort acodec:opus,acodec:mp3,protocol:https\n-f bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio[ext=mp3]/bestaudio[acodec!=aac]/bestaudio\n' | tee /etc/yt-dlp.conf /etc/yt-dlp/config /root/.config/yt-dlp/config /app/.config/yt-dlp/config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

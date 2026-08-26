@@ -8,9 +8,11 @@ use tracing::{error, info};
 pub struct TrackMetadata {
     pub title: String,
     pub url: String,
+    pub stream_url: String,
     pub duration: Option<Duration>,
     pub thumbnail: Option<String>,
     pub author: Option<String>,
+    pub source: String,
 }
 
 #[derive(Deserialize)]
@@ -21,8 +23,18 @@ struct YtDlpOutput {
     duration: Option<f64>,
     thumbnail: Option<String>,
     uploader: Option<String>,
+    extractor_key: Option<String>,
     entries: Option<Vec<YtDlpOutput>>,
     _type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SpotifyTrackInfo {
+    title: String,
+    artist: String,
+    url: String,
+    thumbnail: Option<String>,
+    duration: Option<Duration>,
 }
 
 pub struct SourceManager {
@@ -32,18 +44,251 @@ pub struct SourceManager {
 impl SourceManager {
     pub fn new() -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .build()
+                .unwrap_or_default(),
         }
     }
 
-    /// Resolves a user query into a list of TrackMetadata using yt-dlp.
-    /// Handles single URLs, search queries, and playlists.
+    /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
     pub async fn resolve(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
+        let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+        let is_soundcloud = query.contains("soundcloud.com");
+
+        if is_spotify {
+            info!("Resolving Spotify URL: {}", query);
+            let spotify_items = self.resolve_spotify_items(query).await?;
+            let mut resolved_tracks = Vec::new();
+
+            for item in spotify_items {
+                let search = format!("{} - {}", item.artist, item.title);
+                info!("Matching audio for Spotify track: {}", search);
+
+                if let Ok(yt_tracks) = self.resolve_single_query(&search).await {
+                    if let Some(yt) = yt_tracks.into_iter().next() {
+                        resolved_tracks.push(TrackMetadata {
+                            title: item.title,
+                            url: item.url,
+                            stream_url: yt.stream_url,
+                            duration: item.duration.or(yt.duration),
+                            thumbnail: item.thumbnail.or(yt.thumbnail),
+                            author: Some(item.artist),
+                            source: "Spotify".to_string(),
+                        });
+                    }
+                }
+            }
+
+            if resolved_tracks.is_empty() {
+                return Err("Could not find playable audio for the Spotify link.".to_string());
+            }
+
+            return Ok(resolved_tracks);
+        }
+
+        if is_soundcloud {
+            info!("Resolving SoundCloud URL: {}", query);
+            let sc_tracks = self.resolve_single_query(query).await?;
+            let mut resolved_tracks = Vec::new();
+
+            for sc in sc_tracks {
+                let clean_title = sc.title
+                    .replace(".mp3", "")
+                    .replace(".wav", "")
+                    .replace(".flac", "")
+                    .replace(".m4a", "");
+
+                let search = if let Some(author) = &sc.author {
+                    format!("{} - {}", author, clean_title)
+                } else {
+                    clean_title
+                };
+
+                info!("Matching Opus audio stream for SoundCloud: {}", search);
+
+                // Match with clean Opus/WebM stream to avoid Symphonia multi-frame AAC ADTS bug
+                if let Ok(matched) = self.resolve_single_query(&search).await {
+                    if let Some(m) = matched.into_iter().next() {
+                        resolved_tracks.push(TrackMetadata {
+                            title: sc.title,
+                            url: sc.url,
+                            stream_url: m.stream_url,
+                            duration: sc.duration.or(m.duration),
+                            thumbnail: sc.thumbnail.or(m.thumbnail),
+                            author: sc.author.or(m.author),
+                            source: "SoundCloud".to_string(),
+                        });
+                        continue;
+                    }
+                }
+
+                // Fallback to original if search matching didn't return
+                resolved_tracks.push(sc);
+            }
+
+            if resolved_tracks.is_empty() {
+                return Err("Could not resolve SoundCloud audio.".to_string());
+            }
+
+            return Ok(resolved_tracks);
+        }
+
+        self.resolve_single_query(query).await
+    }
+
+    /// Resolves Spotify tracks, albums, or playlists into rich metadata using Spotify Embed API.
+    async fn resolve_spotify_items(&self, url: &str) -> Result<Vec<SpotifyTrackInfo>, String> {
+        let embed_url = if url.contains("/track/") {
+            let id = url
+                .split("/track/")
+                .nth(1)
+                .and_then(|s| s.split('?').next())
+                .unwrap_or("")
+                .trim_matches('/');
+            format!("https://open.spotify.com/embed/track/{}", id)
+        } else if url.contains("/playlist/") {
+            let id = url
+                .split("/playlist/")
+                .nth(1)
+                .and_then(|s| s.split('?').next())
+                .unwrap_or("")
+                .trim_matches('/');
+            format!("https://open.spotify.com/embed/playlist/{}", id)
+        } else if url.contains("/album/") {
+            let id = url
+                .split("/album/")
+                .nth(1)
+                .and_then(|s| s.split('?').next())
+                .unwrap_or("")
+                .trim_matches('/');
+            format!("https://open.spotify.com/embed/album/{}", id)
+        } else {
+            return Err("Unsupported Spotify URL format.".to_string());
+        };
+
+        info!("Fetching Spotify metadata from: {}", embed_url);
+
+        let resp = self
+            .http_client
+            .get(&embed_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch Spotify embed page: {}", e))?;
+
+        let html = resp.text().await.unwrap_or_default();
+        let mut items = Vec::new();
+
+        // Extract __NEXT_DATA__ JSON payload from Spotify embed page
+        if let Some(start) = html.find("id=\"__NEXT_DATA__\"") {
+            if let Some(json_start) = html[start..].find('>') {
+                let rest = &html[start + json_start + 1..];
+                if let Some(json_end) = rest.find("</script>") {
+                    let json_str = &rest[..json_end];
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                        let entity = v.pointer("/props/pageProps/state/data/entity");
+
+                        if let Some(entity_obj) = entity {
+                            let entity_type = entity_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                            if entity_type == "track" {
+                                let title = entity_obj
+                                    .get("name")
+                                    .or_else(|| entity_obj.get("title"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                let mut artists = Vec::new();
+                                if let Some(artist_arr) = entity_obj.get("artists").and_then(|a| a.as_array()) {
+                                    for a in artist_arr {
+                                        if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                            artists.push(name);
+                                        }
+                                    }
+                                }
+
+                                let artist = artists.join(", ");
+                                let duration = entity_obj
+                                    .get("duration")
+                                    .and_then(|d| d.as_u64())
+                                    .map(Duration::from_millis);
+
+                                let thumbnail = entity_obj
+                                    .pointer("/visualIdentity/image/0/url")
+                                    .and_then(|u| u.as_str())
+                                    .map(|s| s.to_string());
+
+                                let track_id = entity_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                let track_url = if !track_id.is_empty() {
+                                    format!("https://open.spotify.com/track/{}", track_id)
+                                } else {
+                                    url.to_string()
+                                };
+
+                                if !title.is_empty() {
+                                    items.push(SpotifyTrackInfo {
+                                        title,
+                                        artist: if artist.is_empty() { "Spotify Artist".to_string() } else { artist },
+                                        url: track_url,
+                                        thumbnail,
+                                        duration,
+                                    });
+                                }
+                            } else {
+                                // Playlist or Album
+                                if let Some(track_list) = entity_obj.get("trackList").and_then(|t| t.as_array()) {
+                                    for track in track_list.iter().take(50) {
+                                        let title = track.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                                        let subtitle = track.get("subtitle").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                                        let duration = track.get("duration").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                                        let track_id = track.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                        let track_url = if !track_id.is_empty() {
+                                            format!("https://open.spotify.com/track/{}", track_id)
+                                        } else {
+                                            url.to_string()
+                                        };
+
+                                        if !title.is_empty() {
+                                            items.push(SpotifyTrackInfo {
+                                                title,
+                                                artist: if subtitle.is_empty() { "Spotify Artist".to_string() } else { subtitle },
+                                                url: track_url,
+                                                thumbnail: None,
+                                                duration,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if items.is_empty() {
+            return Err("Could not extract tracks from Spotify link.".to_string());
+        }
+
+        Ok(items)
+    }
+
+    /// Resolves YouTube, SoundCloud, or direct URLs via yt-dlp.
+    async fn resolve_single_query(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_url = query.starts_with("http://") || query.starts_with("https://");
         let is_pure_playlist = is_url && (query.contains("/playlist?list=") || query.contains("&list=PL") || query.contains("?list=PL"));
         let is_watch_url = is_url && (query.contains("watch?v=") || query.contains("youtu.be/"));
 
-        let search_target = if is_url {
+        let source_hint = if query.contains("soundcloud.com") {
+            "SoundCloud"
+        } else if query.contains("youtube.com") || query.contains("youtu.be") || !is_url {
+            "YouTube"
+        } else {
+            "Direct Stream"
+        };
+
+        let search_target = if is_url || query.starts_with("ytsearch") {
             query.to_string()
         } else {
             format!("ytsearch10:{}", query)
@@ -93,20 +338,20 @@ impl SourceManager {
             if is_pure_playlist || (is_url && parsed._type.as_deref() == Some("playlist") && !is_watch_url) {
                 // Return all tracks in playlist (capped at 50)
                 for entry in entries.into_iter().take(50) {
-                    if let Some(track) = Self::parse_single_entry(entry) {
+                    if let Some(track) = Self::parse_single_entry(entry, source_hint) {
                         tracks.push(track);
                     }
                 }
             } else {
                 // For search queries or single video results, pick the first result
                 if let Some(first) = entries.into_iter().next() {
-                    if let Some(track) = Self::parse_single_entry(first) {
+                    if let Some(track) = Self::parse_single_entry(first, source_hint) {
                         tracks.push(track);
                     }
                 }
             }
         } else {
-            if let Some(track) = Self::parse_single_entry(parsed) {
+            if let Some(track) = Self::parse_single_entry(parsed, source_hint) {
                 tracks.push(track);
             }
         }
@@ -118,19 +363,43 @@ impl SourceManager {
         Ok(tracks)
     }
 
-    fn parse_single_entry(entry: YtDlpOutput) -> Option<TrackMetadata> {
+    fn parse_single_entry(entry: YtDlpOutput, source_hint: &str) -> Option<TrackMetadata> {
         let title = entry.title?;
-        let url = entry.webpage_url.or(entry.url)?;
+        let webpage = entry.webpage_url.unwrap_or_else(|| entry.url.clone().unwrap_or_default());
+        let url = if !webpage.is_empty() {
+            webpage
+        } else {
+            entry.url.clone().unwrap_or_default()
+        };
+        if url.is_empty() {
+            return None;
+        }
+
+        let stream_url = url.clone();
         let duration = entry.duration.map(|d| Duration::from_secs_f64(d));
         let thumbnail = entry.thumbnail;
         let author = entry.uploader;
 
+        let source = if let Some(extractor) = entry.extractor_key {
+            if extractor.to_lowercase().contains("soundcloud") {
+                "SoundCloud".to_string()
+            } else if extractor.to_lowercase().contains("youtube") {
+                "YouTube".to_string()
+            } else {
+                source_hint.to_string()
+            }
+        } else {
+            source_hint.to_string()
+        };
+
         Some(TrackMetadata {
             title,
             url,
+            stream_url,
             duration,
             thumbnail,
             author,
+            source,
         })
     }
 
