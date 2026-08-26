@@ -55,9 +55,9 @@ const config = {
   },
   audio: {
     ...defaultConfig.audio,
-    quality: 'high',
-    encryption: 'aead_aes256_gcm_rtpsize',
-    resamplingQuality: 'fastest',
+    quality: 'medium',
+    encryption: 'aead_xchacha20_poly1305_rtpsize',
+    resamplingQuality: 'zero',
     lookaheadMs: 5
   }
 }
