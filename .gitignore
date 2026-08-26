@@ -1,6 +1,7 @@
 # Binaries & build artifacts
 bin/
 dist/
+plugins/
 *.exe
 *.exe~
 *.dll
@@ -16,6 +17,7 @@ cover.out
 .env
 .env*.local
 !.env.example
+application.dev.yml
 
 # IDEs and editors
 .vscode/
@@ -23,7 +25,7 @@ cover.out
 *.swp
 *.swo
 *~
-application.dev.yml
+
 # OS specific files
 .DS_Store
 Thumbs.db

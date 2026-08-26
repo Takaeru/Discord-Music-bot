@@ -3,9 +3,6 @@ services:
     image: performanc/nodelink:latest
     container_name: lavalink-server
     restart: unless-stopped
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     volumes:
       - ./nodelink-config.js:/app/config.js
     ports:
@@ -17,9 +14,6 @@ services:
       dockerfile: Dockerfile
     container_name: discord-music-bot
     restart: unless-stopped
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     depends_on:
       - lavalink
     env_file:

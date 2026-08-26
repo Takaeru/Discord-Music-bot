@@ -5,10 +5,7 @@ const config = {
   server: {
     ...defaultConfig.server,
     port: 3000,
-    password: 'youshallnotpass',
-    bufferDurationMs: 10000,
-    frameBufferDurationMs: 25000,
-    trackStuckThresholdMs: 60000
+    password: 'youshallnotpass'
   },
   cluster: {
     ...defaultConfig.cluster,
@@ -19,16 +16,15 @@ const config = {
     youtube: {
       ...defaultConfig.sources.youtube,
       enabled: true,
-      allowItag: [251, 140, 250, 249],
       clients: {
         ...defaultConfig.sources.youtube.clients,
-        search: ['Web', 'Android', 'IOS'],
+        search: ['Web', 'Android'],
         playback: [
-          'IOS',
           'TVCast',
           'WebEmbedded',
           'WebParentTools',
           'AndroidVR',
+          'IOS',
           'Web'
         ]
       }
@@ -37,17 +33,9 @@ const config = {
   audio: {
     ...defaultConfig.audio,
     quality: 'high',
-    encryption: 'aead_xchacha20_poly1305_rtpsize',
-    resamplingQuality: 'fastest',
-    lookaheadMs: 250,
-    crossfade: {
-      enabled: false,
-      duration: 0,
-      curve: 'sinusoidal',
-      mode: 'preload',
-      minBufferMs: 5000,
-      bufferMs: 10000
-    }
+    encryption: 'aead_aes256_gcm_rtpsize',
+    resamplingQuality: 'best',
+    lookaheadMs: 5
   }
 }
 
