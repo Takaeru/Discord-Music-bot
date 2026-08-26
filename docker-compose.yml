@@ -3,6 +3,11 @@ services:
     image: performanc/nodelink:latest
     container_name: lavalink-server
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
     volumes:
       - ./nodelink-config.js:/app/config.js
     ports:
@@ -16,6 +21,11 @@ services:
     restart: unless-stopped
     depends_on:
       - lavalink
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
     env_file:
       - path: .env
         required: false

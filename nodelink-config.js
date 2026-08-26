@@ -11,6 +11,14 @@ const config = {
     ...defaultConfig.cluster,
     enabled: false
   },
+  metrics: {
+    ...defaultConfig.metrics,
+    enabled: false
+  },
+  mix: {
+    ...defaultConfig.mix,
+    enabled: false
+  },
   sources: {
     ...defaultConfig.sources,
     youtube: {
@@ -31,7 +39,7 @@ const config = {
         ]
       }
     },
-    // Disable background probe sources to save CPU and RAM
+    // Disable heavy unneeded sources
     monochrome: { ...defaultConfig.sources.monochrome, enabled: false },
     instagram: { ...defaultConfig.sources.instagram, enabled: false },
     twitter: { ...defaultConfig.sources.twitter, enabled: false },
@@ -58,9 +66,27 @@ const config = {
   audio: {
     ...defaultConfig.audio,
     quality: 'medium',
-    encryption: 'aead_xchacha20_poly1305_rtpsize',
-    resamplingQuality: 'zero',
-    lookaheadMs: 5
+    encryption: 'aead_aes256_gcm_rtpsize',
+    resamplingQuality: 'fastest',
+    lookaheadMs: 5,
+    fading: {
+      enabled: false,
+      trackStart: { duration: 0, curve: 'linear', type: 'volume' },
+      trackEnd: { duration: 0, curve: 'linear', type: 'volume' },
+      trackStop: { duration: 0, curve: 'linear', type: 'volume' },
+      seek: { duration: 0, curve: 'linear', type: 'volume' },
+      pause: { duration: 0, curve: 'sinusoidal', type: 'tape' },
+      resume: { duration: 0, curve: 'sinusoidal', type: 'tape' },
+      ducking: { enabled: false, duration: 0, targetVolume: 0.3, curve: 'linear' }
+    },
+    crossfade: {
+      enabled: false,
+      duration: 0,
+      curve: 'sinusoidal',
+      mode: 'preload',
+      minBufferMs: 250,
+      bufferMs: 0
+    }
   }
 }
 
