@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use songbird::input::{Input, YoutubeDl};
+use songbird::input::{HttpRequest, Input, YoutubeDl};
 use std::process::Command;
 use std::time::Duration;
 use tracing::{error, info};
@@ -54,7 +54,6 @@ impl SourceManager {
     /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
     pub async fn resolve(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
-        let is_soundcloud = query.contains("soundcloud.com");
 
         if is_spotify {
             info!("Resolving Spotify URL: {}", query);
@@ -82,53 +81,6 @@ impl SourceManager {
 
             if resolved_tracks.is_empty() {
                 return Err("Could not find playable audio for the Spotify link.".to_string());
-            }
-
-            return Ok(resolved_tracks);
-        }
-
-        if is_soundcloud {
-            info!("Resolving SoundCloud URL: {}", query);
-            let sc_tracks = self.resolve_single_query(query).await?;
-            let mut resolved_tracks = Vec::new();
-
-            for sc in sc_tracks {
-                let clean_title = sc.title
-                    .replace(".mp3", "")
-                    .replace(".wav", "")
-                    .replace(".flac", "")
-                    .replace(".m4a", "");
-
-                let search = if let Some(author) = &sc.author {
-                    format!("{} - {}", author, clean_title)
-                } else {
-                    clean_title
-                };
-
-                info!("Matching Opus audio stream for SoundCloud: {}", search);
-
-                // Match with clean Opus/WebM stream to avoid Symphonia multi-frame AAC ADTS bug
-                if let Ok(matched) = self.resolve_single_query(&search).await {
-                    if let Some(m) = matched.into_iter().next() {
-                        resolved_tracks.push(TrackMetadata {
-                            title: sc.title,
-                            url: sc.url,
-                            stream_url: m.stream_url,
-                            duration: sc.duration.or(m.duration),
-                            thumbnail: sc.thumbnail.or(m.thumbnail),
-                            author: sc.author.or(m.author),
-                            source: "SoundCloud".to_string(),
-                        });
-                        continue;
-                    }
-                }
-
-                // Fallback to original if search matching didn't return
-                resolved_tracks.push(sc);
-            }
-
-            if resolved_tracks.is_empty() {
-                return Err("Could not resolve SoundCloud audio.".to_string());
             }
 
             return Ok(resolved_tracks);
@@ -403,8 +355,43 @@ impl SourceManager {
         })
     }
 
-    /// Creates a Songbird audio Input from a track URL using YoutubeDl.
-    pub fn create_input(&self, url: &str) -> Input {
-        YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
+    /// Extracts a direct progressive media stream URL (Opus in WebM or MP3) to avoid AAC ADTS errors.
+    pub async fn extract_direct_stream(&self, url: &str) -> Result<String, String> {
+        let target = url.to_string();
+        tokio::task::spawn_blocking(move || {
+            let output = Command::new("yt-dlp")
+                .args([
+                    "-g",
+                    "--format-sort",
+                    "acodec:opus,acodec:mp3,proto:https",
+                    "-f",
+                    "bestaudio[acodec=opus]/bestaudio[ext=webm]/http_mp3_128/bestaudio[ext=mp3]/bestaudio[acodec!=aac]/bestaudio/best",
+                    "--no-warnings",
+                    &target,
+                ])
+                .output()
+                .map_err(|e| format!("Failed to run yt-dlp -g: {}", e))?;
+
+            if output.status.success() {
+                let direct = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !direct.is_empty() && direct.starts_with("http") {
+                    return Ok(direct);
+                }
+            }
+            Err("Failed to resolve direct audio URL".to_string())
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
+
+    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback.
+    pub async fn create_input(&self, url: &str) -> Input {
+        if let Ok(direct_url) = self.extract_direct_stream(url).await {
+            info!("Playing via direct progressive audio stream (Opus/MP3): {}", direct_url.split('?').next().unwrap_or(&direct_url));
+            HttpRequest::new(self.http_client.clone(), direct_url).into()
+        } else {
+            info!("Playing via YoutubeDl fallback for: {}", url);
+            YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
+        }
     }
 }

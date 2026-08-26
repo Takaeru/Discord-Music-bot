@@ -31,7 +31,7 @@ impl VoiceEventHandler for TrackEndHandler {
         if mode == LoopMode::Queue {
             // Re-enqueue the finished track to the back of the queue
             let mut handler = self.call_lock.lock().await;
-            let input = self.source_mgr.create_input(&self.track.stream_url);
+            let input = self.source_mgr.create_input(&self.track.stream_url).await;
             let next_handle = handler.enqueue_input(input).await;
             let _ = next_handle.set_volume(0.8);
 
@@ -217,7 +217,7 @@ async fn handle_play(
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
 
-        let input = source_mgr.create_input(&track.stream_url);
+        let input = source_mgr.create_input(&track.stream_url).await;
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
 
@@ -270,7 +270,7 @@ async fn handle_play(
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
 
         for track in &resolved {
-            let input = source_mgr.create_input(&track.stream_url);
+            let input = source_mgr.create_input(&track.stream_url).await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
