@@ -27,11 +27,11 @@ lavalink:
       rotation: true
       channelMix: true
       lowPass: true
-    bufferDurationMs: 400
-    frameBufferDurationMs: 5000
+    bufferDurationMs: 5000
+    frameBufferDurationMs: 15000
     opusEncodingQuality: 10
-    resamplingQuality: HIGH
-    trackStuckThresholdMs: 10000
+    resamplingQuality: MEDIUM
+    trackStuckThresholdMs: 30000
     useSeekGhosting: true
     playerUpdateInterval: 5
     youtubeSearchEnabled: true
@@ -45,16 +45,14 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     oauth:
-      enabled: false
+      enabled: true
       refreshToken: ""
       skipInitialization: true
     clients:
-      - MUSIC
-      - ANDROID_MUSIC
-      - MWEB
-      - WEBEMBEDDED
-      - TV
+      - TVHTML5
       - ANDROID_VR
+      - MUSIC
+      - WEBEMBEDDED
       - WEB
 
 logging:

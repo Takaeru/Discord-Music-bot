@@ -1,19 +1,13 @@
 services:
   lavalink:
-    image: performanc/nodelink:latest
+    image: ghcr.io/lavalink-devs/lavalink:4
     container_name: lavalink-server
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.75'
-          memory: 512M
-    environment:
-      - CLUSTER_ENABLED=false
     volumes:
-      - ./nodelink-config.js:/app/config.js
+      - ./application.yml:/opt/Lavalink/application.yml
+      - ./plugins:/opt/Lavalink/plugins
     ports:
-      - "3000:3000"
+      - "2333:2333"
 
   discord-bot:
     build:
@@ -23,11 +17,6 @@ services:
     restart: unless-stopped
     depends_on:
       - lavalink
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 256M
     env_file:
       - path: .env
         required: false
@@ -35,7 +24,7 @@ services:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LAVALINK_HOST=${LAVALINK_HOST:-lavalink}
-      - LAVALINK_PORT=${LAVALINK_PORT:-3000}
+      - LAVALINK_PORT=${LAVALINK_PORT:-2333}
       - LAVALINK_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
       - LAVALINK_SECURE=${LAVALINK_SECURE:-false}
       - FFMPEG_PATH=ffmpeg
