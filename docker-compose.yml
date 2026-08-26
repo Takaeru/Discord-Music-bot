@@ -9,7 +9,7 @@ services:
     volumes:
       - ./nodelink-config.js:/app/config.js
     ports:
-      - "3000:3000"
+      - "31233:3000"
 
   discord-bot:
     build:
