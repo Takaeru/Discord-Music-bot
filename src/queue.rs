@@ -94,6 +94,20 @@ impl QueueManager {
         }
     }
 
+    pub async fn cycle_queue(&self, guild_id: GuildId) -> Option<TrackMetadata> {
+        let mut map = self.queues.lock().await;
+        if let Some(queue) = map.get_mut(&guild_id) {
+            if let Some(front) = queue.pop_front() {
+                queue.push_back(front);
+                queue.front().cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);

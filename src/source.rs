@@ -393,25 +393,14 @@ impl SourceManager {
         .map_err(|e| format!("Task join error: {}", e))?
     }
 
-    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback with pre-buffering.
+    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback.
     pub async fn create_input(&self, url: &str) -> Input {
-        let input: Input = if let Ok(direct_url) = self.extract_direct_stream(url).await {
-            info!("Playing via direct progressive audio stream (Opus/MP3): {}", direct_url.split('?').next().unwrap_or(&direct_url));
+        if let Ok(direct_url) = self.extract_direct_stream(url).await {
+            info!("Playing via direct progressive audio stream: {}", direct_url.split('?').next().unwrap_or(&direct_url));
             HttpRequest::new(self.http_client.clone(), direct_url).into()
         } else {
             info!("Playing via YoutubeDl fallback for: {}", url);
             YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
-        };
-
-        match input
-            .make_playable_async(symphonia::default::get_codecs(), symphonia::default::get_probe())
-            .await
-        {
-            Ok(playable) => playable,
-            Err(e) => {
-                error!("Failed to prepare playable input buffer: {:?}", e);
-                YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
-            }
         }
     }
 }

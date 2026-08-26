@@ -73,7 +73,7 @@ pub async fn handle_play(
         }
     };
 
-    // Resolve track or playlist
+    // Resolve track or playlist (fast metadata resolution)
     let resolved = match source_mgr.resolve(&query).await {
         Ok(tracks) => tracks,
         Err(e) => {
@@ -84,30 +84,33 @@ pub async fn handle_play(
 
     let mut handler = call_lock.lock().await;
     let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+    let is_currently_playing = handler.queue().current().is_some();
 
     if resolved.len() == 1 {
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
 
-        let input = source_mgr.create_input(&track.stream_url).await;
-        let track_handle = handler.enqueue_input(input).await;
-        let _ = track_handle.set_volume(0.8);
+        if !is_currently_playing {
+            let input = source_mgr.create_input(&track.stream_url).await;
+            let track_handle = handler.enqueue_input(input).await;
+            let _ = track_handle.set_volume(0.8);
 
-        if loop_mode == LoopMode::Track {
-            let _ = track_handle.enable_loop();
+            if loop_mode == LoopMode::Track {
+                let _ = track_handle.enable_loop();
+            }
+
+            let _ = track_handle.add_event(
+                Event::Track(TrackEvent::End),
+                TrackEndHandler {
+                    guild_id,
+                    queue_mgr: queue_mgr.clone(),
+                    source_mgr: source_mgr.clone(),
+                    call_lock: call_lock.clone(),
+                },
+            );
         }
 
-        let _ = track_handle.add_event(
-            Event::Track(TrackEvent::End),
-            TrackEndHandler {
-                guild_id,
-                track: track.clone(),
-                queue_mgr: queue_mgr.clone(),
-                source_mgr: source_mgr.clone(),
-                call_lock: call_lock.clone(),
-            },
-        );
-
+        let queue_len = queue_mgr.get_queue(guild_id).await.len();
         let duration_str = format_duration(track.duration);
         let author_str = track.author.as_deref().unwrap_or("Unknown Artist");
 
@@ -121,7 +124,7 @@ pub async fn handle_play(
             .url(&track.url)
             .field("👤 Artist", author_str, true)
             .field("⏱️ Duration", duration_str, true)
-            .field("📌 Position", format!("#{}", handler.queue().len()), true)
+            .field("📌 Position", format!("#{}", queue_len), true)
             .footer(
                 CreateEmbedFooter::new(format!("Platform: {}", track.source))
                     .icon_url(source_icon_url(&track.source)),
@@ -136,21 +139,26 @@ pub async fn handle_play(
             .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
             .await;
     } else {
-        // Playlist handling
+        // Playlist handling (instant enqueue without blocking!)
         let total_tracks = resolved.len();
         let source_name = resolved[0].source.clone();
+        let first_track = resolved[0].clone();
+
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
 
-        for track in &resolved {
-            let input = source_mgr.create_input(&track.stream_url).await;
+        if !is_currently_playing {
+            let input = source_mgr.create_input(&first_track.stream_url).await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
+
+            if loop_mode == LoopMode::Track {
+                let _ = track_handle.enable_loop();
+            }
 
             let _ = track_handle.add_event(
                 Event::Track(TrackEvent::End),
                 TrackEndHandler {
                     guild_id,
-                    track: track.clone(),
                     queue_mgr: queue_mgr.clone(),
                     source_mgr: source_mgr.clone(),
                     call_lock: call_lock.clone(),
@@ -158,14 +166,16 @@ pub async fn handle_play(
             );
         }
 
+        let queue_len = queue_mgr.get_queue(guild_id).await.len();
+
         let embed = CreateEmbed::new()
             .author(
                 CreateEmbedAuthor::new(format!("{} Playlist Enqueued", source_name))
                     .icon_url(source_icon_url(&source_name)),
             )
             .title(format!("Added {} tracks to queue", total_tracks))
-            .field("📌 First Track", format!("[**{}**]({})", resolved[0].title, resolved[0].url), false)
-            .field("📊 Queue Total", format!("{} tracks", handler.queue().len()), true)
+            .field("📌 First Track", format!("[**{}**]({})", first_track.title, first_track.url), false)
+            .field("📊 Queue Total", format!("{} tracks", queue_len), true)
             .footer(
                 CreateEmbedFooter::new(format!("Platform: {}", source_name))
                     .icon_url(source_icon_url(&source_name)),
