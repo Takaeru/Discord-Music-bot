@@ -16,6 +16,8 @@ const config = {
     youtube: {
       ...defaultConfig.sources.youtube,
       enabled: true,
+      targetItag: 251,
+      allowItag: [251, 250, 249],
       clients: {
         ...defaultConfig.sources.youtube.clients,
         search: ['Web', 'Android'],
