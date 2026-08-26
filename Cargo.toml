@@ -1,0 +1,16 @@
+[package]
+name = "discord-music-bot"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"] }
+songbird = { version = "0.6", features = ["builtin-queue", "serenity", "driver", "gateway", "rustls"] }
+symphonia = { version = "0.5", features = ["all"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json"] }

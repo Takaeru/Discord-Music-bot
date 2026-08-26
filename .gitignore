@@ -1,3 +1,8 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
 # Binaries & build artifacts
 bin/
 dist/
@@ -8,16 +13,21 @@ plugins/
 *.so
 *.dylib
 *.test
-
-# Go workspace & coverage
-*.out
-cover.out
+*.jar
 
 # Environment & secrets
 .env
 .env*.local
 !.env.example
 application.dev.yml
+
+# Go workspace & coverage (legacy)
+*.out
+cover.out
+
+# Logs
+logs/
+*.log
 
 # IDEs and editors
 .vscode/

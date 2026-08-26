@@ -1,47 +1,34 @@
-# syntax=docker/dockerfile:1
+# Stage 1: Build Rust binary
+FROM rust:bookworm AS builder
 
-# Stage 1: Build binary
-FROM golang:1.24-alpine AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+WORKDIR /usr/src/discord-bot
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
-# Pre-fetch Go modules
-COPY go.mod go.sum ./
-RUN go mod download
+COPY src ./src
+RUN touch src/main.rs && cargo build --release
 
-# Copy application source code
-COPY . .
+# Stage 2: Minimal runtime image
+FROM debian:bookworm-slim
 
-# Compile optimized static Go binary
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o /build/bot ./cmd/bot
-
-# Stage 2: Runtime image
-FROM alpine:3.21
-
-# Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    yt-dlp \
+    libopus0 \
+    ca-certificates \
+    curl \
     python3 \
-    tzdata
-
-# Create dedicated non-root user and group
-RUN addgroup -g 1000 botuser && \
-    adduser -D -u 1000 -G botuser botuser
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy compiled binary from builder stage
-COPY --from=builder /build/bot /app/bot
+COPY --from=builder /usr/src/discord-bot/target/release/discord-music-bot /app/discord-music-bot
 
-# Set file ownership
-RUN chown -R botuser:botuser /app
-
-# Run as non-root user
-USER botuser:botuser
-
-# Support graceful shutdown via SIGTERM
-STOPSIGNAL SIGTERM
-
-ENTRYPOINT ["/app/bot"]
+ENTRYPOINT ["/app/discord-music-bot"]
