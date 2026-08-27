@@ -232,7 +232,7 @@ pub async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr
     let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
 
     if queue.is_empty() {
-        let _ = send_response(ctx, command, "📭 The queue is currently empty.", false).await;
+        let _ = send_response(ctx, command, "📭 The queue is currently empty.", true).await;
         return;
     }
 
@@ -244,7 +244,8 @@ pub async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .embed(embed)
-                    .components(components),
+                    .components(components)
+                    .ephemeral(true),
             ),
         )
         .await;

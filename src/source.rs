@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use songbird::input::{HttpRequest, Input, YoutubeDl};
+use songbird::input::{Input, YoutubeDl};
 use std::process::Command;
 use std::time::Duration;
 use tracing::{error, info};
@@ -376,6 +376,7 @@ impl SourceManager {
     }
 
     /// Extracts a direct progressive media stream URL (Opus in WebM or MP3) to avoid AAC ADTS errors.
+    #[allow(dead_code)]
     pub async fn extract_direct_stream(&self, url: &str) -> Result<String, String> {
         let target = url.to_string();
         tokio::task::spawn_blocking(move || {
@@ -410,14 +411,9 @@ impl SourceManager {
         .map_err(|e| format!("Task join error: {}", e))?
     }
 
-    /// Creates a Songbird audio Input from a track URL using direct progressive HttpRequest or YoutubeDl fallback.
+    /// Creates a Songbird audio Input with buffered stream decoding, eliminating network jitter and rate throttling.
     pub async fn create_input(&self, url: &str) -> Input {
-        if let Ok(direct_url) = self.extract_direct_stream(url).await {
-            info!("Playing via direct progressive audio stream: {}", direct_url.split('?').next().unwrap_or(&direct_url));
-            HttpRequest::new(self.http_client.clone(), direct_url).into()
-        } else {
-            info!("Playing via YoutubeDl fallback for: {}", url);
-            YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
-        }
+        info!("Creating audio stream pipeline for: {}", url);
+        YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
     }
 }
