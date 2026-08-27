@@ -227,11 +227,6 @@ pub async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr
         None => return,
     };
 
-    if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, command.user.id) {
-        let _ = send_response(ctx, command, msg, true).await;
-        return;
-    }
-
     let queue = queue_mgr.get_queue(guild_id).await;
     let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
     let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
@@ -267,21 +262,24 @@ pub async fn handle_queue_component(
         None => return,
     };
 
-    if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, component.user.id) {
-        let _ = component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(msg)
-                        .ephemeral(true),
-                ),
-            )
-            .await;
-        return;
-    }
-
     let custom_id = component.data.custom_id.as_str();
+
+    // If attempting to modify playback (play, jump, shuffle, skip, stop), require active voice channel
+    if !custom_id.starts_with("queue_page:") && custom_id != "queue_indicator" {
+        if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, component.user.id) {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(msg)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    }
 
     if custom_id.starts_with("queue_page:") {
         let page: usize = custom_id
@@ -497,11 +495,6 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
         Some(id) => id,
         None => return,
     };
-
-    if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, command.user.id) {
-        let _ = send_response(ctx, command, msg, true).await;
-        return;
-    }
 
     if let Some(current) = queue_mgr.get_current(guild_id).await {
         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
