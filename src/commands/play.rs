@@ -26,16 +26,10 @@ pub async fn handle_play(
         }
     };
 
-    // Find user's voice channel without holding CacheRef across await
-    let user_voice_channel_id = ctx
-        .cache
-        .guild(guild_id)
-        .and_then(|g| g.voice_states.get(&command.user.id).and_then(|vs| vs.channel_id));
-
-    let connect_to = match user_voice_channel_id {
-        Some(channel) => channel,
-        None => {
-            let _ = send_response(ctx, command, "⚠️ You must be in a voice channel to play music.", false).await;
+    let connect_to = match crate::utils::voice::check_voice_channel(ctx, guild_id, command.user.id) {
+        Ok(channel) => channel,
+        Err(msg) => {
+            let _ = send_response(ctx, command, msg, true).await;
             return;
         }
     };

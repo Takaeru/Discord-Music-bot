@@ -6,12 +6,18 @@ use std::sync::Arc;
 
 use crate::queue::{LoopMode, QueueManager};
 use crate::utils::response::send_response;
+use crate::utils::voice::check_voice_channel;
 
 pub async fn handle_pause(ctx: &Context, command: &CommandInteraction) {
     let guild_id = match command.guild_id {
         Some(id) => id,
         None => return,
     };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
 
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
@@ -20,10 +26,10 @@ pub async fn handle_pause(ctx: &Context, command: &CommandInteraction) {
             let _ = current.pause();
             let _ = send_response(ctx, command, "⏸️ Playback paused.", false).await;
         } else {
-            let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", false).await;
+            let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", true).await;
         }
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", true).await;
     }
 }
 
@@ -33,6 +39,11 @@ pub async fn handle_resume(ctx: &Context, command: &CommandInteraction) {
         None => return,
     };
 
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
@@ -40,10 +51,10 @@ pub async fn handle_resume(ctx: &Context, command: &CommandInteraction) {
             let _ = current.play();
             let _ = send_response(ctx, command, "▶️ Playback resumed.", false).await;
         } else {
-            let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", false).await;
+            let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", true).await;
         }
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", true).await;
     }
 }
 
@@ -53,20 +64,23 @@ pub async fn handle_skip(ctx: &Context, command: &CommandInteraction, _queue_mgr
         None => return,
     };
 
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
-            // Disable loop if track repeat was on so it can actually skip
             let _ = current.disable_loop();
             let _ = current.stop();
-            // Note: current.stop() fires Songbird's TrackEvent::End, which calls TrackEndHandler -> queue_mgr.advance()!
             let _ = send_response(ctx, command, "⏭️ Skipped current track.", false).await;
         } else {
-            let _ = send_response(ctx, command, "⚠️ Nothing is playing to skip.", false).await;
+            let _ = send_response(ctx, command, "⚠️ Nothing is playing to skip.", true).await;
         }
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", true).await;
     }
 }
 
@@ -76,6 +90,11 @@ pub async fn handle_stop(ctx: &Context, command: &CommandInteraction, queue_mgr:
         None => return,
     };
 
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
@@ -83,7 +102,7 @@ pub async fn handle_stop(ctx: &Context, command: &CommandInteraction, queue_mgr:
         queue_mgr.clear(guild_id).await;
         let _ = send_response(ctx, command, "⏹️ Playback stopped and queue cleared.", false).await;
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not connected to a voice channel.", true).await;
     }
 }
 
@@ -92,6 +111,11 @@ pub async fn handle_repeat(ctx: &Context, command: &CommandInteraction, queue_mg
         Some(id) => id,
         None => return,
     };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
 
     let mode_str = match command.data.options.iter().find(|opt| opt.name == "mode") {
         Some(opt) => match &opt.value {
@@ -134,6 +158,11 @@ pub async fn handle_volume(ctx: &Context, command: &CommandInteraction) {
         None => return,
     };
 
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
     let volume_level = match command.data.options.iter().find(|opt| opt.name == "level") {
         Some(opt) => match opt.value {
             CommandDataOptionValue::Integer(v) => v as f32,
@@ -156,10 +185,10 @@ pub async fn handle_volume(ctx: &Context, command: &CommandInteraction) {
             )
             .await;
         } else {
-            let _ = send_response(ctx, command, "⚠️ Nothing is playing right now.", false).await;
+            let _ = send_response(ctx, command, "⚠️ Nothing is playing right now.", true).await;
         }
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not in a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not in a voice channel.", true).await;
     }
 }
 
@@ -169,16 +198,21 @@ pub async fn handle_leave(ctx: &Context, command: &CommandInteraction, queue_mgr
         None => return,
     };
 
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
     let manager = songbird::get(ctx).await.unwrap();
     if manager.get(guild_id).is_some() {
         if let Err(e) = manager.leave(guild_id).await {
-            let _ = send_response(ctx, command, &format!("❌ Failed to leave voice: {:?}", e), false).await;
+            let _ = send_response(ctx, command, &format!("❌ Failed to leave voice: {:?}", e), true).await;
         } else {
             queue_mgr.clear(guild_id).await;
             let _ = send_response(ctx, command, "👋 Disconnected from voice channel.", false).await;
         }
     } else {
-        let _ = send_response(ctx, command, "⚠️ Bot is not in a voice channel.", false).await;
+        let _ = send_response(ctx, command, "⚠️ Bot is not in a voice channel.", true).await;
     }
 }
 
@@ -187,6 +221,11 @@ pub async fn handle_shuffle(ctx: &Context, command: &CommandInteraction, queue_m
         Some(id) => id,
         None => return,
     };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
 
     let is_shuffled = queue_mgr.toggle_shuffle(guild_id).await;
     let msg = if is_shuffled {
@@ -209,7 +248,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("🔀 `/shuffle`", "Toggle random / shuffle mode on or off", true)
         .field("🔁 `/repeat <mode>`", "Repeat mode: `off`, `track` (1 song), or `queue`", true)
         .field("⏹️ `/stop`", "Stop music and clear queue", true)
-        .field("📋 `/queue`", "View interactive song list & controls", true)
+        .field("📋 `/queue`", "View interactive song list & controls (private)", true)
         .field("📻 `/nowplaying`", "Show currently playing track info", true)
         .field("🔊 `/volume <0-100>`", "Set volume level", true)
         .field("👋 `/leave`", "Disconnect bot from voice", true)
