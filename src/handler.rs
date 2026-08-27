@@ -18,6 +18,9 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("Bot is ready and connected as {}", ready.user.tag());
 
+        info!("Starting idle monitor task...");
+        crate::utils::voice::start_idle_monitor(ctx.clone(), self.queue_mgr.clone());
+
         info!("Registering global slash commands...");
         let commands = register_commands();
         match ctx.http.create_global_commands(&commands).await {
