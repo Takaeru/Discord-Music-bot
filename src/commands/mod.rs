@@ -14,8 +14,9 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_help, handle_leave, handle_pause, handle_repeat, handle_resume, handle_shuffle,
-    handle_skip, handle_stop, handle_volume,
+    handle_clear, handle_help, handle_jump, handle_leave, handle_pause, handle_ping,
+    handle_remove, handle_repeat, handle_replay, handle_resume, handle_shuffle, handle_skip,
+    handle_stop, handle_volume,
 };
 use self::play::handle_play;
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
@@ -35,9 +36,33 @@ pub fn register_commands() -> Vec<CreateCommand> {
         CreateCommand::new("pause").description("Pause the currently playing track"),
         CreateCommand::new("resume").description("Resume playback of the paused track"),
         CreateCommand::new("skip").description("Skip the current track and play the next in queue"),
+        CreateCommand::new("replay").description("Replay the current track from the beginning"),
         CreateCommand::new("stop").description("Stop playback and clear the queue"),
         CreateCommand::new("queue").description("View the current music queue"),
         CreateCommand::new("nowplaying").description("Show details of the currently playing track"),
+        CreateCommand::new("clear").description("Clear all upcoming tracks from the queue"),
+        CreateCommand::new("remove")
+            .description("Remove a specific track from queue by position")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Integer,
+                    "position",
+                    "Position number of the track to remove (e.g. 1, 2, 3)",
+                )
+                .min_int_value(1)
+                .required(true),
+            ),
+        CreateCommand::new("jump")
+            .description("Jump directly to a song in the queue")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Integer,
+                    "position",
+                    "Position number of the track to jump to",
+                )
+                .min_int_value(1)
+                .required(true),
+            ),
         CreateCommand::new("shuffle").description("Toggle random / shuffle mode for the queue"),
         CreateCommand::new("repeat")
             .description("Set repeat / loop mode (off, track, queue)")
@@ -78,6 +103,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .required(true),
             ),
         CreateCommand::new("leave").description("Disconnect the bot from the voice channel"),
+        CreateCommand::new("ping").description("Check bot latency and audio pipeline status"),
         CreateCommand::new("help").description("Show available music commands"),
     ]
 }
@@ -95,13 +121,18 @@ pub async fn handle_command(
         "pause" => handle_pause(ctx, command).await,
         "resume" => handle_resume(ctx, command).await,
         "skip" => handle_skip(ctx, command, queue_mgr).await,
+        "replay" => handle_replay(ctx, command, source_mgr, queue_mgr).await,
         "stop" => handle_stop(ctx, command, queue_mgr).await,
         "queue" => handle_queue(ctx, command, queue_mgr).await,
         "nowplaying" => handle_nowplaying(ctx, command, queue_mgr).await,
+        "clear" => handle_clear(ctx, command, queue_mgr).await,
+        "remove" => handle_remove(ctx, command, queue_mgr).await,
+        "jump" => handle_jump(ctx, command, source_mgr, queue_mgr).await,
         "shuffle" => handle_shuffle(ctx, command, queue_mgr).await,
         "repeat" | "loop" => handle_repeat(ctx, command, queue_mgr).await,
         "volume" => handle_volume(ctx, command).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
+        "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
         _ => {
             let _ = send_response(ctx, command, "⚠️ Unknown command.", false).await;

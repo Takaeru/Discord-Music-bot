@@ -13,6 +13,7 @@ pub struct TrackMetadata {
     pub thumbnail: Option<String>,
     pub author: Option<String>,
     pub source: String,
+    pub requester: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -89,6 +90,7 @@ impl SourceManager {
                 thumbnail: first.thumbnail.clone().or(first_yt.as_ref().and_then(|y| y.thumbnail.clone())),
                 author: Some(first.artist.clone()),
                 source: "Spotify".to_string(),
+                requester: None,
             });
 
             // For the remaining tracks in the playlist, defer audio resolution until playback
@@ -102,6 +104,7 @@ impl SourceManager {
                     thumbnail: item.thumbnail,
                     author: Some(item.artist),
                     source: "Spotify".to_string(),
+                    requester: None,
                 });
             }
 
@@ -210,9 +213,9 @@ impl SourceManager {
                                     });
                                 }
                             } else {
-                                // Playlist or Album
+                                // Playlist or Album - extract ALL tracks without any hardcoded limit
                                 if let Some(track_list) = entity_obj.get("trackList").and_then(|t| t.as_array()) {
-                                    for track in track_list.iter().take(20) {
+                                    for track in track_list.iter() {
                                         let title = track.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let subtitle = track.get("subtitle").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let duration = track.get("duration").and_then(|d| d.as_u64()).map(Duration::from_millis);
@@ -279,8 +282,8 @@ impl SourceManager {
             ]);
 
             if has_playlist {
-                // Limit playlist or mix to maximum 20 tracks
-                cmd.args(["--flat-playlist", "--playlist-end", "20"]);
+                // Unlimited playlist loading
+                cmd.arg("--flat-playlist");
             } else if is_url {
                 cmd.arg("--no-playlist");
             } else {
@@ -308,8 +311,8 @@ impl SourceManager {
 
         if let Some(entries) = parsed.entries {
             if has_playlist || (is_url && parsed._type.as_deref() == Some("playlist")) {
-                // Return all tracks in playlist/mix (capped at 20)
-                for entry in entries.into_iter().take(20) {
+                // Return all tracks in playlist/mix without capping
+                for entry in entries.into_iter() {
                     if let Some(track) = Self::parse_single_entry(entry, source_hint) {
                         tracks.push(track);
                     }
@@ -372,6 +375,7 @@ impl SourceManager {
             thumbnail,
             author,
             source,
+            requester: None,
         })
     }
 
@@ -384,11 +388,11 @@ impl SourceManager {
                 .args([
                     "-g",
                     "--format-sort",
-                    "acodec:opus,acodec:mp3,proto:https",
+                    "acodec:opus,acodec:mp3,abr:96,proto:https",
                     "-f",
-                    "bestaudio[acodec=opus]/bestaudio[ext=webm]/http_mp3_128/bestaudio[ext=mp3]/bestaudio[acodec!=aac]/bestaudio/best",
+                    "ba[acodec=opus][abr<=128]/ba[ext=webm][abr<=128]/ba[acodec=opus]/ba[ext=webm]/http_mp3_128/ba[ext=mp3]/ba[acodec!=aac]/ba/b",
                     "--socket-timeout",
-                    "20",
+                    "15",
                     "--retries",
                     "10",
                     "--fragment-retries",
@@ -411,14 +415,14 @@ impl SourceManager {
         .map_err(|e| format!("Task join error: {}", e))?
     }
 
-    /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling and ultra-low RAM footprint (~15-20MB).
+    /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.
     pub async fn create_input(&self, url: &str) -> Input {
         let stream_target = match self.extract_direct_stream(url).await {
             Ok(direct) => direct,
             Err(_) => url.to_string(),
         };
 
-        info!("Creating ultra-low-memory 48kHz audio pipeline for: {}", url);
+        info!("Creating fast-loading 48kHz audio pipeline for: {}", url);
 
         let res = tokio::task::spawn_blocking(move || {
             let mut ffmpeg = std::process::Command::new("ffmpeg");
@@ -429,6 +433,10 @@ impl SourceManager {
                 "1",
                 "-reconnect_delay_max",
                 "5",
+                "-probesize",
+                "32768",
+                "-analyzeduration",
+                "0",
                 "-nostdin",
                 "-i",
                 &stream_target,
@@ -436,7 +444,7 @@ impl SourceManager {
                 "-c:a",
                 "libopus",
                 "-b:a",
-                "128k",
+                "96k",
                 "-ar",
                 "48000",
                 "-ac",

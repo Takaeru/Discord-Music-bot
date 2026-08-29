@@ -237,21 +237,240 @@ pub async fn handle_shuffle(ctx: &Context, command: &CommandInteraction, queue_m
     let _ = send_response(ctx, command, msg, false).await;
 }
 
+pub async fn handle_clear(ctx: &Context, command: &CommandInteraction, queue_mgr: &Arc<QueueManager>) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let removed = queue_mgr.clear_upcoming(guild_id).await;
+    if removed > 0 {
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("🗑️ Cleared **{}** upcoming track(s) from the queue.", removed),
+            false,
+        )
+        .await;
+    } else {
+        let _ = send_response(ctx, command, "⚠️ The queue has no upcoming tracks to clear.", true).await;
+    }
+}
+
+pub async fn handle_remove(ctx: &Context, command: &CommandInteraction, queue_mgr: &Arc<QueueManager>) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let position = match command.data.options.iter().find(|opt| opt.name == "position") {
+        Some(opt) => match opt.value {
+            CommandDataOptionValue::Integer(v) => v as usize,
+            _ => 0,
+        },
+        None => 0,
+    };
+
+    if position == 0 {
+        let _ = send_response(
+            ctx,
+            command,
+            "⚠️ Position must be 1 or greater. Use `/skip` to skip the currently playing song (#0).",
+            true,
+        )
+        .await;
+        return;
+    }
+
+    if let Some(removed_track) = queue_mgr.remove_at(guild_id, position).await {
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("🗑️ Removed **#{}** [**{}**]({}) from the queue.", position, removed_track.title, removed_track.url),
+            false,
+        )
+        .await;
+    } else {
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("⚠️ No track found at position **#{}**.", position),
+            true,
+        )
+        .await;
+    }
+}
+
+pub async fn handle_jump(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let position = match command.data.options.iter().find(|opt| opt.name == "position") {
+        Some(opt) => match opt.value {
+            CommandDataOptionValue::Integer(v) => v as usize,
+            _ => 0,
+        },
+        None => 0,
+    };
+
+    if position == 0 {
+        let _ = send_response(ctx, command, "⚠️ Track #0 is already playing. Use `/replay` to restart it.", true).await;
+        return;
+    }
+
+    let target_track = queue_mgr.jump_to(guild_id, position).await;
+    if let Some(track) = target_track {
+        let manager = songbird::get(ctx).await.unwrap();
+        if let Some(call_lock) = manager.get(guild_id) {
+            let mut handler = call_lock.lock().await;
+            handler.queue().stop();
+
+            let input = source_mgr.create_input(&track.stream_url).await;
+            let track_handle = handler.enqueue_input(input).await;
+            let _ = track_handle.set_volume(0.8);
+
+            let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+            if loop_mode == LoopMode::Track {
+                let _ = track_handle.enable_loop();
+            }
+
+            let _ = track_handle.add_event(
+                songbird::events::Event::Track(songbird::events::TrackEvent::End),
+                crate::commands::events::TrackEndHandler {
+                    guild_id,
+                    queue_mgr: queue_mgr.clone(),
+                    source_mgr: source_mgr.clone(),
+                    call_lock: call_lock.clone(),
+                },
+            );
+        }
+
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("⏭️ Jumped to **#{}**: [**{}**]({})", position, track.title, track.url),
+            false,
+        )
+        .await;
+    } else {
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("⚠️ Invalid track position **#{}**.", position),
+            true,
+        )
+        .await;
+    }
+}
+
+pub async fn handle_replay(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    if let Some(current) = queue_mgr.get_current(guild_id).await {
+        let manager = songbird::get(ctx).await.unwrap();
+        if let Some(call_lock) = manager.get(guild_id) {
+            let mut handler = call_lock.lock().await;
+            handler.queue().stop();
+
+            let input = source_mgr.create_input(&current.stream_url).await;
+            let track_handle = handler.enqueue_input(input).await;
+            let _ = track_handle.set_volume(0.8);
+
+            let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+            if loop_mode == LoopMode::Track {
+                let _ = track_handle.enable_loop();
+            }
+
+            let _ = track_handle.add_event(
+                songbird::events::Event::Track(songbird::events::TrackEvent::End),
+                crate::commands::events::TrackEndHandler {
+                    guild_id,
+                    queue_mgr: queue_mgr.clone(),
+                    source_mgr: source_mgr.clone(),
+                    call_lock: call_lock.clone(),
+                },
+            );
+        }
+
+        let _ = send_response(
+            ctx,
+            command,
+            &format!("🔄 Replaying: [**{}**]({})", current.title, current.url),
+            false,
+        )
+        .await;
+    } else {
+        let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", true).await;
+    }
+}
+
+pub async fn handle_ping(ctx: &Context, command: &CommandInteraction) {
+    let embed = CreateEmbed::new()
+        .title("🏓 Pong!")
+        .field("⚡ Bot Gateway Status", "🟢 Connected & Operational", false)
+        .field("📻 Audio Engine", "Songbird 48kHz Stereo Opus (96kbps)", false)
+        .color(Color::from_rgb(88, 101, 242));
+
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new().embed(embed),
+            ),
+        )
+        .await;
+}
+
 pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
     let embed = CreateEmbed::new()
         .title("📖 Discord Music Bot - Help Guide")
         .description("Lightweight high-performance music bot powered by Rust & Songbird.")
-        .field("🎵 `/play <query>`", "Play YouTube / Spotify / SoundCloud / search keywords", false)
-        .field("⏸️ `/pause`", "Pause currently playing song", true)
-        .field("▶️ `/resume`", "Resume paused playback", true)
-        .field("⏭️ `/skip`", "Skip to the next song", true)
+        .field("🎵 `/play <query>`", "Play YouTube / Spotify / SoundCloud / keywords", false)
+        .field("⏸️ `/pause` | ▶️ `/resume`", "Pause or resume current playback", true)
+        .field("⏭️ `/skip` | 🔄 `/replay`", "Skip song or replay from beginning", true)
         .field("🔀 `/shuffle`", "Toggle random / shuffle mode on or off", true)
-        .field("🔁 `/repeat <mode>`", "Repeat mode: `off`, `track` (1 song), or `queue`", true)
-        .field("⏹️ `/stop`", "Stop music and clear queue", true)
-        .field("📋 `/queue`", "View interactive song list & controls (private)", true)
-        .field("📻 `/nowplaying`", "Show currently playing track info", true)
+        .field("🔁 `/repeat <mode>`", "Repeat mode: `off`, `track`, or `queue`", true)
+        .field("📋 `/queue` | 📻 `/nowplaying`", "View interactive queue or current song info", true)
+        .field("🗑️ `/remove <pos>` | 🗑️ `/clear`", "Remove specific song or clear upcoming queue", true)
+        .field("⏭️ `/jump <pos>`", "Jump directly to a song in the queue", true)
         .field("🔊 `/volume <0-100>`", "Set volume level", true)
-        .field("👋 `/leave`", "Disconnect bot from voice", true)
+        .field("⏹️ `/stop` | 👋 `/leave`", "Stop music or disconnect bot from voice", true)
+        .field("🏓 `/ping`", "Check bot latency and audio engine status", true)
         .color(Color::from_rgb(88, 101, 242));
 
     let _ = command

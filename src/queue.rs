@@ -170,6 +170,34 @@ impl QueueManager {
         }
     }
 
+    pub async fn remove_at(&self, guild_id: GuildId, index: usize) -> Option<TrackMetadata> {
+        let mut map = self.queues.lock().await;
+        if let Some(queue) = map.get_mut(&guild_id) {
+            if index < queue.len() {
+                queue.remove(index)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub async fn clear_upcoming(&self, guild_id: GuildId) -> usize {
+        let mut map = self.queues.lock().await;
+        if let Some(queue) = map.get_mut(&guild_id) {
+            if queue.len() > 1 {
+                let removed_count = queue.len() - 1;
+                queue.truncate(1);
+                removed_count
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);

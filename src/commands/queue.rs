@@ -44,16 +44,17 @@ pub fn build_queue_view(
                 Some(e) => format!("{} ", e),
                 None => String::new(),
             };
+            let req_str = track.requester.as_deref().map(|r| format!(" • {}", r)).unwrap_or_default();
 
             if i == 0 {
                 desc.push_str(&format!(
-                    "**▶️ Now Playing:**\n{}[**{}**]({}) • `{}` (`{}`)\n\n**Up Next:**\n",
-                    prefix, track.title, track.url, track.source, dur
+                    "**▶️ Now Playing:**\n{}[**{}**]({}) • `{}` (`{}`){}\n\n**Up Next:**\n",
+                    prefix, track.title, track.url, track.source, dur, req_str
                 ));
             } else {
                 desc.push_str(&format!(
-                    "`{:02}.` {}[**{}**]({}) • `{}` (`{}`)\n",
-                    i, prefix, track.title, track.url, track.source, dur
+                    "`{:02}.` {}[**{}**]({}) • `{}` (`{}`){}\n",
+                    i, prefix, track.title, track.url, track.source, dur, req_str
                 ));
             }
         }
@@ -67,9 +68,10 @@ pub fn build_queue_view(
                 Some(e) => format!("{} ", e),
                 None => String::new(),
             };
+            let req_str = track.requester.as_deref().map(|r| format!(" • {}", r)).unwrap_or_default();
             desc.push_str(&format!(
-                "`{:02}.` {}[**{}**]({}) • `{}` (`{}`)\n",
-                actual_idx, prefix, track.title, track.url, track.source, dur
+                "`{:02}.` {}[**{}**]({}) • `{}` (`{}`){}\n",
+                actual_idx, prefix, track.title, track.url, track.source, dur, req_str
             ));
         }
     }
@@ -498,22 +500,30 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
 
     if let Some(current) = queue_mgr.get_current(guild_id).await {
         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+        let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
+        let queue_len = queue_mgr.get_queue(guild_id).await.len();
         let author = current.author.as_deref().unwrap_or("Unknown Artist");
         let dur = format_duration(current.duration);
+        let requester = current.requester.as_deref().unwrap_or("Unknown User");
+        let shuffle_str = if is_shuffled { "🔀 On" } else { "➡️ Off" };
 
         let mut embed = CreateEmbed::new()
             .author(
-                CreateEmbedAuthor::new(format!("Now Playing ({})", current.source))
+                CreateEmbedAuthor::new(format!("Now Playing • {}", current.source))
                     .icon_url(source_icon_url(&current.source))
                     .url(&current.url),
             )
             .title(&current.title)
             .url(&current.url)
+            .description(format!("🔗 [Open Track on {}]({})", current.source, current.url))
             .field("👤 Artist", author, true)
             .field("⏱️ Duration", dur, true)
+            .field("🙋 Requested By", requester, true)
             .field("🔁 Loop Mode", format!("{} {}", loop_mode.emoji(), loop_mode.as_str()), true)
+            .field("🔀 Random Mode", shuffle_str, true)
+            .field("📊 Queue Position", format!("Track 1 of {}", queue_len), true)
             .footer(
-                CreateEmbedFooter::new(format!("Platform: {}", current.source))
+                CreateEmbedFooter::new(format!("Platform: {} | High-Performance Audio", current.source))
                     .icon_url(source_icon_url(&current.source)),
             )
             .color(source_color(&current.source));

@@ -67,14 +67,20 @@ pub async fn handle_play(
         }
     };
 
+    let requester_tag = format!("<@{}>", command.user.id);
+
     // Resolve track or playlist (fast metadata resolution)
-    let resolved = match source_mgr.resolve(&query).await {
+    let mut resolved = match source_mgr.resolve(&query).await {
         Ok(tracks) => tracks,
         Err(e) => {
             let _ = send_followup(ctx, command, &format!("❌ Could not find or extract audio: {}", e)).await;
             return;
         }
     };
+
+    for track in &mut resolved {
+        track.requester = Some(requester_tag.clone());
+    }
 
     let mut handler = call_lock.lock().await;
     let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
@@ -118,6 +124,7 @@ pub async fn handle_play(
             .url(&track.url)
             .field("👤 Artist", author_str, true)
             .field("⏱️ Duration", duration_str, true)
+            .field("🙋 Requested By", &requester_tag, true)
             .field("📌 Position", format!("#{}", queue_len), true)
             .footer(
                 CreateEmbedFooter::new(format!("Platform: {}", track.source))
@@ -162,7 +169,7 @@ pub async fn handle_play(
 
         let queue_len = queue_mgr.get_queue(guild_id).await.len();
 
-        let embed = CreateEmbed::new()
+        let mut embed = CreateEmbed::new()
             .author(
                 CreateEmbedAuthor::new(format!("{} Playlist Enqueued", source_name))
                     .icon_url(source_icon_url(&source_name)),
@@ -170,11 +177,16 @@ pub async fn handle_play(
             .title(format!("Added {} tracks to queue", total_tracks))
             .field("📌 First Track", format!("[**{}**]({})", first_track.title, first_track.url), false)
             .field("📊 Queue Total", format!("{} tracks", queue_len), true)
+            .field("🙋 Requested By", &requester_tag, true)
             .footer(
                 CreateEmbedFooter::new(format!("Platform: {}", source_name))
                     .icon_url(source_icon_url(&source_name)),
             )
             .color(source_color(&source_name));
+
+        if let Some(thumb) = &first_track.thumbnail {
+            embed = embed.thumbnail(thumb);
+        }
 
         let _ = command
             .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
