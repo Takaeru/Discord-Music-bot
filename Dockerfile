@@ -1,42 +1,21 @@
 # Stage 1: Build Rust binary
-# Builder selalu native (BUILDPLATFORM) supaya cepat; xx handle cross-compile-nya
-FROM --platform=$BUILDPLATFORM rust:bookworm AS builder
+FROM rust:bookworm AS builder
 
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
-
-# xx = Docker official cross-compilation helper (handles PKG_CONFIG, sysroot, linker, dll)
-COPY --from=tonistiigi/xx:latest / /
-
-# Install build tools + clang (dibutuhkan xx sebagai cross-linker)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
-    clang \
-    lld \
+    libopus-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Install libs versi target platform (arm64 atau amd64) via xx-apt-get
-RUN xx-apt-get install -y --no-install-recommends \
-    libssl-dev \
-    libopus-dev
-
-# Tambahkan Rust target yang sesuai dengan TARGETPLATFORM
-RUN xx-info env && rustup target add $(xx-cargo --print-target-triple)
 
 WORKDIR /usr/src/discord-bot
 COPY Cargo.toml Cargo.lock* ./
 
-# Pre-build dependensi (caching layer)
+# Pre-build dependensi untuk cache layer
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
-    && xx-cargo build --release \
+    && cargo build --release \
     && rm -rf src
 
 COPY src ./src
-
-# Build final binary lalu salin ke path yang konsisten
-RUN touch src/main.rs \
-    && xx-cargo build --release \
-    && cp "target/$(xx-cargo --print-target-triple)/release/discord-music-bot" /app-binary
+RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Minimal runtime image
 FROM debian:bookworm-slim
@@ -55,6 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /app-binary /app/discord-music-bot
+COPY --from=builder /usr/src/discord-bot/target/release/discord-music-bot /app/discord-music-bot
 
 ENTRYPOINT ["/app/discord-music-bot"]
