@@ -1,10 +1,11 @@
 use serenity::all::{
-    Color, CommandDataOptionValue, CommandInteraction, Context, CreateEmbed,
+    Color, CommandDataOptionValue, CommandInteraction, ComponentInteraction, Context, CreateEmbed,
     CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 use std::sync::Arc;
 
 use crate::queue::{LoopMode, QueueManager};
+use crate::utils::embed::build_now_playing_embed;
 use crate::utils::response::send_response;
 use crate::utils::voice::check_voice_channel;
 
@@ -363,6 +364,7 @@ pub async fn handle_jump(
                     queue_mgr: queue_mgr.clone(),
                     source_mgr: source_mgr.clone(),
                     call_lock: call_lock.clone(),
+                    http: ctx.http.clone(),
                 },
             );
         }
@@ -423,6 +425,7 @@ pub async fn handle_replay(
                     queue_mgr: queue_mgr.clone(),
                     source_mgr: source_mgr.clone(),
                     call_lock: call_lock.clone(),
+                    http: ctx.http.clone(),
                 },
             );
         }
@@ -481,4 +484,194 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
             ),
         )
         .await;
+}
+
+pub async fn handle_music_component(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match component.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, component.user.id) {
+        let _ = component
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    let custom_id = component.data.custom_id.as_str();
+
+    match custom_id {
+        "music_pause" => {
+            let manager = songbird::get(ctx).await.unwrap();
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(current) = handler.queue().current() {
+                    let _ = current.pause();
+                }
+            }
+
+            if let Some(current_track) = queue_mgr.get_current(guild_id).await {
+                let queue = queue_mgr.get_queue(guild_id).await;
+                let upcoming = queue.len().saturating_sub(1);
+                let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+                let (embed, row) = build_now_playing_embed(&current_track, upcoming, loop_mode, true);
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .embed(embed)
+                                .components(vec![row]),
+                        ),
+                    )
+                    .await;
+            }
+        }
+        "music_resume" => {
+            let manager = songbird::get(ctx).await.unwrap();
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(current) = handler.queue().current() {
+                    let _ = current.play();
+                }
+            }
+
+            if let Some(current_track) = queue_mgr.get_current(guild_id).await {
+                let queue = queue_mgr.get_queue(guild_id).await;
+                let upcoming = queue.len().saturating_sub(1);
+                let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+                let (embed, row) = build_now_playing_embed(&current_track, upcoming, loop_mode, false);
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .embed(embed)
+                                .components(vec![row]),
+                        ),
+                    )
+                    .await;
+            }
+        }
+        "music_skip" => {
+            let manager = songbird::get(ctx).await.unwrap();
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(current) = handler.queue().current() {
+                    let _ = current.disable_loop();
+                    let _ = current.stop();
+                }
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+            if let Some(current_track) = queue_mgr.get_current(guild_id).await {
+                let queue = queue_mgr.get_queue(guild_id).await;
+                let upcoming = queue.len().saturating_sub(1);
+                let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+                let (embed, row) = build_now_playing_embed(&current_track, upcoming, loop_mode, false);
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .embed(embed)
+                                .components(vec![row]),
+                        ),
+                    )
+                    .await;
+            } else {
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .content("📭 Antrean telah selesai.")
+                                .embeds(vec![])
+                                .components(vec![]),
+                        ),
+                    )
+                    .await;
+            }
+        }
+        "music_loop" => {
+            let current_mode = queue_mgr.get_loop_mode(guild_id).await;
+            let next_mode = match current_mode {
+                LoopMode::Off => LoopMode::Track,
+                LoopMode::Track => LoopMode::Queue,
+                LoopMode::Queue => LoopMode::Off,
+            };
+            queue_mgr.set_loop_mode(guild_id, next_mode).await;
+
+            let manager = songbird::get(ctx).await.unwrap();
+            let is_paused = if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                if let Some(current) = handler.queue().current() {
+                    match next_mode {
+                        LoopMode::Track => {
+                            let _ = current.enable_loop();
+                        }
+                        LoopMode::Queue | LoopMode::Off => {
+                            let _ = current.disable_loop();
+                        }
+                    }
+                    matches!(current.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if let Some(current_track) = queue_mgr.get_current(guild_id).await {
+                let queue = queue_mgr.get_queue(guild_id).await;
+                let upcoming = queue.len().saturating_sub(1);
+                let (embed, row) = build_now_playing_embed(&current_track, upcoming, next_mode, is_paused);
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::UpdateMessage(
+                            CreateInteractionResponseMessage::new()
+                                .embed(embed)
+                                .components(vec![row]),
+                        ),
+                    )
+                    .await;
+            }
+        }
+        "music_stop" => {
+            let manager = songbird::get(ctx).await.unwrap();
+            if let Some(handler_lock) = manager.get(guild_id) {
+                let handler = handler_lock.lock().await;
+                handler.queue().stop();
+            }
+            queue_mgr.clear(guild_id).await;
+
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::UpdateMessage(
+                        CreateInteractionResponseMessage::new()
+                            .content("⏹️ Pemutaran dihentikan dan antrean dibersihkan.")
+                            .embeds(vec![])
+                            .components(vec![]),
+                    ),
+                )
+                .await;
+        }
+        _ => {}
+    }
 }

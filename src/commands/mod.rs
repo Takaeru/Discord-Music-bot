@@ -14,9 +14,9 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_clear, handle_help, handle_jump, handle_leave, handle_pause, handle_ping,
-    handle_remove, handle_repeat, handle_replay, handle_resume, handle_shuffle, handle_skip,
-    handle_stop, handle_volume,
+    handle_clear, handle_help, handle_jump, handle_leave, handle_music_component, handle_pause,
+    handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume, handle_shuffle,
+    handle_skip, handle_stop, handle_volume,
 };
 use self::play::handle_play;
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
@@ -150,5 +150,7 @@ pub async fn handle_component(
 
     if custom_id.starts_with("queue_") {
         handle_queue_component(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id.starts_with("music_") {
+        handle_music_component(ctx, component, source_mgr, queue_mgr).await;
     }
 }

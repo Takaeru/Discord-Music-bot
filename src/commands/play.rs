@@ -9,7 +9,7 @@ use tracing::error;
 use super::events::TrackEndHandler;
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::SourceManager;
-use crate::utils::embed::{format_duration, source_color, source_icon_url};
+use crate::utils::embed::{build_now_playing_embed, source_color, source_icon_url};
 use crate::utils::response::{send_followup, send_response};
 
 pub async fn handle_play(
@@ -86,6 +86,8 @@ pub async fn handle_play(
     let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
     let is_currently_playing = handler.queue().current().is_some();
 
+    queue_mgr.set_text_channel(guild_id, command.channel_id).await;
+
     if resolved.len() == 1 {
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
@@ -106,39 +108,26 @@ pub async fn handle_play(
                     queue_mgr: queue_mgr.clone(),
                     source_mgr: source_mgr.clone(),
                     call_lock: call_lock.clone(),
+                    http: ctx.http.clone(),
                 },
             );
         }
 
         let queue_len = queue_mgr.get_queue(guild_id).await.len();
-        let duration_str = format_duration(track.duration);
-        let author_str = track.author.as_deref().unwrap_or("Unknown Artist");
+        let upcoming_count = queue_len.saturating_sub(1);
+        let (embed, action_row) = build_now_playing_embed(&track, upcoming_count, loop_mode, false);
 
-        let mut embed = CreateEmbed::new()
-            .author(
-                CreateEmbedAuthor::new(format!("Playing from {}", track.source))
-                    .icon_url(source_icon_url(&track.source))
-                    .url(&track.url),
+        if let Ok(msg) = command
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
             )
-            .title(&track.title)
-            .url(&track.url)
-            .field("👤 Artist", author_str, true)
-            .field("⏱️ Duration", duration_str, true)
-            .field("🙋 Requested By", &requester_tag, true)
-            .field("📌 Position", format!("#{}", queue_len), true)
-            .footer(
-                CreateEmbedFooter::new(format!("Platform: {}", track.source))
-                    .icon_url(source_icon_url(&track.source)),
-            )
-            .color(source_color(&track.source));
-
-        if let Some(thumb) = &track.thumbnail {
-            embed = embed.thumbnail(thumb);
+            .await
+        {
+            queue_mgr.set_last_message_id(guild_id, msg.id).await;
         }
-
-        let _ = command
-            .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
-            .await;
     } else {
         // Playlist handling (instant enqueue without blocking!)
         let total_tracks = resolved.len();
@@ -163,6 +152,7 @@ pub async fn handle_play(
                     queue_mgr: queue_mgr.clone(),
                     source_mgr: source_mgr.clone(),
                     call_lock: call_lock.clone(),
+                    http: ctx.http.clone(),
                 },
             );
         }
@@ -188,8 +178,11 @@ pub async fn handle_play(
             embed = embed.thumbnail(thumb);
         }
 
-        let _ = command
+        if let Ok(msg) = command
             .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
-            .await;
+            .await
+        {
+            queue_mgr.set_last_message_id(guild_id, msg.id).await;
+        }
     }
 }

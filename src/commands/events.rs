@@ -1,4 +1,4 @@
-use serenity::all::GuildId;
+use serenity::all::{CreateMessage, EditMessage, GuildId, Http};
 use serenity::async_trait;
 use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
@@ -8,12 +8,14 @@ use std::sync::Arc;
 
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::SourceManager;
+use crate::utils::embed::build_now_playing_embed;
 
 pub struct TrackEndHandler {
     pub guild_id: GuildId,
     pub queue_mgr: Arc<QueueManager>,
     pub source_mgr: Arc<SourceManager>,
     pub call_lock: Arc<tokio::sync::Mutex<Call>>,
+    pub http: Arc<Http>,
 }
 
 #[async_trait]
@@ -44,8 +46,41 @@ impl VoiceEventHandler for TrackEndHandler {
                     queue_mgr: self.queue_mgr.clone(),
                     source_mgr: self.source_mgr.clone(),
                     call_lock: self.call_lock.clone(),
+                    http: self.http.clone(),
                 },
             );
+
+            // Auto-update / send Now Playing message with control buttons
+            let queue = self.queue_mgr.get_queue(self.guild_id).await;
+            let upcoming = queue.len().saturating_sub(1);
+            let (embed, action_row) = build_now_playing_embed(&track, upcoming, mode, false);
+
+            if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
+                if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                    let _ = channel_id.delete_message(&self.http, old_msg_id).await;
+                }
+
+                let create_msg = CreateMessage::new()
+                    .embed(embed)
+                    .components(vec![action_row]);
+
+                if let Ok(new_msg) = channel_id.send_message(&self.http, create_msg).await {
+                    self.queue_mgr.set_last_message_id(self.guild_id, new_msg.id).await;
+                }
+            }
+        } else if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
+            if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                let _ = channel_id
+                    .edit_message(
+                        &self.http,
+                        old_msg_id,
+                        EditMessage::new()
+                            .content("📭 Antrean telah selesai diputar.")
+                            .embeds(vec![])
+                            .components(vec![]),
+                    )
+                    .await;
+            }
         }
 
         None

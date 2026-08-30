@@ -1,7 +1,7 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use serenity::all::GuildId;
+use serenity::all::{ChannelId, GuildId, MessageId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -39,6 +39,8 @@ pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
+    text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
+    last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
 }
 
 impl QueueManager {
@@ -47,6 +49,8 @@ impl QueueManager {
             queues: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
+            text_channels: Arc::new(Mutex::new(HashMap::new())),
+            last_messages: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -198,6 +202,26 @@ impl QueueManager {
         }
     }
 
+    pub async fn set_text_channel(&self, guild_id: GuildId, channel_id: ChannelId) {
+        let mut map = self.text_channels.lock().await;
+        map.insert(guild_id, channel_id);
+    }
+
+    pub async fn get_text_channel(&self, guild_id: GuildId) -> Option<ChannelId> {
+        let map = self.text_channels.lock().await;
+        map.get(&guild_id).copied()
+    }
+
+    pub async fn set_last_message_id(&self, guild_id: GuildId, msg_id: MessageId) {
+        let mut map = self.last_messages.lock().await;
+        map.insert(guild_id, msg_id);
+    }
+
+    pub async fn get_last_message_id(&self, guild_id: GuildId) -> Option<MessageId> {
+        let map = self.last_messages.lock().await;
+        map.get(&guild_id).copied()
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
@@ -205,5 +229,9 @@ impl QueueManager {
         loop_map.remove(&guild_id);
         let mut shuf_map = self.shuffled.lock().await;
         shuf_map.remove(&guild_id);
+        let mut tc_map = self.text_channels.lock().await;
+        tc_map.remove(&guild_id);
+        let mut msg_map = self.last_messages.lock().await;
+        msg_map.remove(&guild_id);
     }
 }

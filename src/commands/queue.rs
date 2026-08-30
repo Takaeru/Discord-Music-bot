@@ -11,7 +11,7 @@ use std::time::Duration;
 use super::events::TrackEndHandler;
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::{SourceManager, TrackMetadata};
-use crate::utils::embed::{format_duration, source_color, source_emoji, source_icon_url};
+use crate::utils::embed::{build_now_playing_embed, format_duration, source_color, source_emoji, source_icon_url};
 use crate::utils::response::send_response;
 
 const PAGE_SIZE: usize = 10;
@@ -389,6 +389,7 @@ pub async fn handle_queue_component(
                                 queue_mgr: queue_mgr.clone(),
                                 source_mgr: source_mgr.clone(),
                                 call_lock: handler_lock.clone(),
+                                http: ctx.http.clone(),
                             },
                         );
                     }
@@ -500,43 +501,30 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
 
     if let Some(current) = queue_mgr.get_current(guild_id).await {
         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-        let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
         let queue_len = queue_mgr.get_queue(guild_id).await.len();
-        let author = current.author.as_deref().unwrap_or("Unknown Artist");
-        let dur = format_duration(current.duration);
-        let requester = current.requester.as_deref().unwrap_or("Unknown User");
-        let shuffle_str = if is_shuffled { "🔀 On" } else { "➡️ Off" };
+        let upcoming_count = queue_len.saturating_sub(1);
 
-        let mut embed = CreateEmbed::new()
-            .author(
-                CreateEmbedAuthor::new(format!("Now Playing • {}", current.source))
-                    .icon_url(source_icon_url(&current.source))
-                    .url(&current.url),
-            )
-            .title(&current.title)
-            .url(&current.url)
-            .description(format!("🔗 [Open Track on {}]({})", current.source, current.url))
-            .field("👤 Artist", author, true)
-            .field("⏱️ Duration", dur, true)
-            .field("🙋 Requested By", requester, true)
-            .field("🔁 Loop Mode", format!("{} {}", loop_mode.emoji(), loop_mode.as_str()), true)
-            .field("🔀 Random Mode", shuffle_str, true)
-            .field("📊 Queue Position", format!("Track 1 of {}", queue_len), true)
-            .footer(
-                CreateEmbedFooter::new(format!("Platform: {} | High-Performance Audio", current.source))
-                    .icon_url(source_icon_url(&current.source)),
-            )
-            .color(source_color(&current.source));
+        let manager = songbird::get(ctx).await.unwrap();
+        let is_paused = if let Some(handler_lock) = manager.get(guild_id) {
+            let handler = handler_lock.lock().await;
+            if let Some(track_handle) = handler.queue().current() {
+                matches!(track_handle.get_info().await, Ok(info) if info.playing == songbird::tracks::PlayMode::Pause)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
-        if let Some(thumb) = &current.thumbnail {
-            embed = embed.thumbnail(thumb);
-        }
+        let (embed, action_row) = build_now_playing_embed(&current, upcoming_count, loop_mode, is_paused);
 
         let _ = command
             .create_response(
                 &ctx.http,
                 CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new().embed(embed),
+                    CreateInteractionResponseMessage::new()
+                        .embed(embed)
+                        .components(vec![action_row]),
                 ),
             )
             .await;

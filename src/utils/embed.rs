@@ -1,6 +1,9 @@
-use serenity::all::Color;
+use serenity::all::{ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed};
 use std::env;
 use std::time::Duration;
+
+use crate::queue::LoopMode;
+use crate::source::TrackMetadata;
 
 pub fn source_emoji(source: &str) -> Option<String> {
     match source {
@@ -48,9 +51,72 @@ pub fn format_duration(dur: Option<Duration>) -> String {
             if hours > 0 {
                 format!("{:02}:{:02}:{:02}", hours, mins, rem_secs)
             } else {
-                format!("{:02}:{:02}", mins, rem_secs)
+                format!("{}:{:02}", mins, rem_secs)
             }
         }
         None => "--:--".to_string(),
     }
+}
+
+pub fn build_now_playing_embed(
+    track: &TrackMetadata,
+    upcoming_count: usize,
+    loop_mode: LoopMode,
+    is_paused: bool,
+) -> (CreateEmbed, CreateActionRow) {
+    let loop_str = match loop_mode {
+        LoopMode::Off => "❌ Nonaktif",
+        LoopMode::Track => "🔂 1 Lagu",
+        LoopMode::Queue => "🔁 Semua Antrean",
+    };
+
+    let dur_str = format_duration(track.duration);
+    let artist_str = track.author.as_deref().unwrap_or("Unknown Artist");
+    let requester_str = track.requester.as_deref().unwrap_or("-");
+
+    let mut embed = CreateEmbed::new()
+        .title("🎵 Sekarang Diputar")
+        .description(format!("[{}]({})", track.title, track.url))
+        .field("⏱️ Durasi", dur_str, true)
+        .field("🎶 Artis", artist_str, true)
+        .field("👤 Diminta oleh", requester_str, true)
+        .field("📌 Antrian", format!("{} lagu berikutnya", upcoming_count), true)
+        .field("🔁 Loop", loop_str, true)
+        .field("\u{200b}", "🎶 Gunakan tombol di bawah untuk kontrol musik", false)
+        .color(Color::from_rgb(88, 101, 242));
+
+    if let Some(thumb) = &track.thumbnail {
+        embed = embed.thumbnail(thumb);
+    }
+
+    let pause_btn = if is_paused {
+        CreateButton::new("music_resume")
+            .label("Resume")
+            .emoji('▶')
+            .style(ButtonStyle::Primary)
+    } else {
+        CreateButton::new("music_pause")
+            .label("Pause")
+            .emoji('⏸')
+            .style(ButtonStyle::Primary)
+    };
+
+    let skip_btn = CreateButton::new("music_skip")
+        .label("Skip")
+        .emoji('⏭')
+        .style(ButtonStyle::Primary);
+
+    let loop_btn = CreateButton::new("music_loop")
+        .label("Loop")
+        .emoji('🔁')
+        .style(ButtonStyle::Secondary);
+
+    let stop_btn = CreateButton::new("music_stop")
+        .label("Stop")
+        .emoji('⏹')
+        .style(ButtonStyle::Danger);
+
+    let action_row = CreateActionRow::Buttons(vec![pause_btn, skip_btn, loop_btn, stop_btn]);
+
+    (embed, action_row)
 }
