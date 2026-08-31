@@ -12,6 +12,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 - 🚀 **Instant Playlist Enqueueing (Just-In-Time Streaming)**:
   - Playlists and mixes (YouTube/Spotify) are enqueued into the queue **instantly (< 1 second)**.
   - Audio streams are extracted **Just-In-Time (JIT)** right when the song's turn arrives, eliminating long loading times and preventing expired stream URLs.
+- 🛡️ **Unlimited Playlists**: Playlists and Mixes load fully (no track cap) — Let YouTube Mixes grow as long as they want.
 - 🔒 **DAVE / E2EE Compliant**: Fully compatible with Discord's mandatory voice end-to-end encryption protocol.
 - 🔓 **No YouTube Login/Session Required**: Works out of the box without cookies, OAuth, or YouTube account sessions.
 - 🎼 **Multi-Platform Support**:
@@ -24,9 +25,23 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
     - 📑 **Pagination Buttons**: `◀️ Prev`, `Page X/Y`, `Next ▶️` to browse through large queues smoothly.
     - 🎵 **Direct Song Selection (Select Menu)**: Jump directly to any track in the queue by choosing from a dropdown list without typing commands.
     - 🎛️ **Quick Controls**: Built-in `⏭️ Skip` and `⏹️ Stop` buttons directly on the queue embed.
-- 🔁 **Flexible Repeat Modes**: Loop a single track (`/repeat mode:track`) or cycle the entire queue indefinitely (`/repeat mode:queue`).
-- 🛡️ **Smart Playlist Capping**: Playlists and Mixes are capped at 20 tracks to prevent queue overload and keep memory footprint low.
-- 🎛️ **Full Audio Codec Support**: AAC, M4A/ISOMP4, MP3, WebM/MKV, Opus, FLAC, Vorbis via pure Rust Symphonia.
+  - **Interactive `/play` Search**:
+    - 🔍 Search returns top 10 YouTube candidates as a numbered embed.
+    - 🎵 Dropdown selector lets you pick a track to play directly in Discord.
+    - 👁️ View count displayed per result to help identify official versions over covers.
+- 🌐 **Bilingual Support (English / Indonesian)**:
+  - All user-facing text translated via `BOT_LANG` environment variable.
+  - `BOT_LANG=en` (default) — English
+  - `BOT_LANG=id` — Indonesian
+  - Control buttons stay in English even in Indonesian mode (standard music UI).
+- 🛡️ **Race-Condition-Free Multi-User**:
+  - Search results keyed by `MessageId` so two users can `/play` in the same guild without interference.
+  - Voice channel membership enforced on dropdown selection.
+  - TTL cleanup (5 minutes) prevents abandoned search results from leaking memory.
+- ⏱️ **Hang Protection**:
+  - yt-dlp search subprocess: 30s timeout.
+  - Stream URL resolution: 20s timeout.
+  - Discord interactions always defer before long work to avoid 3s response timeout.
 - 🐳 **Single Standalone Docker Container**: Zero external services needed (Lavalink, NodeLink, Java, and NodeJS eliminated).
 
 ---
@@ -36,17 +51,23 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `/play <query>` | Play audio from YouTube, Spotify, SoundCloud, or search keywords | `/play yoasobi idol` or `/play https://open.spotify.com/...` |
+| `/playnext <query>` | Add a song to play next (priority queue position 1) | `/playnext kalafina magia` |
 | `/pause` | Pause currently playing track | `/pause` |
 | `/resume` | Resume playback of paused track | `/resume` |
 | `/skip` | Skip to the next track in queue | `/skip` |
+| `/replay` | Replay the current track from the beginning | `/replay` |
 | `/shuffle` | Toggle random / shuffle mode on or off | `/shuffle` |
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
 | `/stop` | Stop playback and clear the queue | `/stop` |
 | `/queue` | View current queue, platform sources, repeat mode, and total duration | `/queue` |
 | `/nowplaying` | Show details, platform source, thumbnail, and active loop mode | `/nowplaying` |
+| `/jump <pos>` | Jump to a specific position in the queue | `/jump 5` |
+| `/remove <pos>` | Remove a specific track from the queue | `/remove 3` |
+| `/clear` | Clear the entire queue (keeps current track playing) | `/clear` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
+| `/ping` | Show bot latency | `/ping` |
 | `/help` | Show command overview and usage | `/help` |
 
 ---
@@ -70,75 +91,49 @@ Set your configuration in `.env`:
 DISCORD_BOT_TOKEN=your_discord_bot_token_here
 LOG_LEVEL=INFO
 
-# (Optional) Custom Emojis for inline text rendering (e.g. <:spotify:123456789012345678>)
-EMOJI_SPOTIFY=
-EMOJI_YOUTUBE=
-EMOJI_SOUNDCLOUD=
+# Language: en (default) or id (Indonesian)
+BOT_LANG=en
 ```
 
-### 3. Run with Docker Compose
+### 3. Run with Docker
 ```bash
-# Build and run container in detached mode
-docker compose up -d --build
+docker compose up -d
+```
 
-# Check container status
-docker compose ps
+The bot will register 19 global slash commands on first startup (takes ~1 hour for Discord to propagate globally, or use a test guild for instant registration).
 
-# View live logs
-docker compose logs -f discord-bot
+---
 
-# Stop container
+## 🌐 Multi-Language
+
+| Code | Language | Notes |
+|:---|:---|:---|
+| `en` (default) | English | All UI text in English |
+| `id` | Indonesian (Bahasa) | All UI text translated; control buttons stay English |
+
+The bot reads `BOT_LANG` environment variable at startup. To switch language, change the env var and restart the container:
+
+```bash
+# Switch to Indonesian
 docker compose down
+BOT_LANG=id docker compose up -d
 ```
+
+### Translating to a new language
+
+Edit `src/lang.rs` and add a new `Lang` static instance following the `EN` / `ID` pattern. Then update the `get_lang()` function to detect your new code. All ~120 user-facing strings are listed in one place for easy translation.
 
 ---
 
-## 🌐 VPS / Ubuntu Server Deployment
+## 🐛 Self-Hosting Notes
 
-To run this bot on an Ubuntu VPS:
-
-1. **Clone repository**:
-   ```bash
-   git clone <your-repo-url> /opt/discord-bot
-   cd /opt/discord-bot
-   ```
-2. **Setup environment**:
-   ```bash
-   cp .env.example .env
-   nano .env # Paste your DISCORD_BOT_TOKEN
-   ```
-3. **Start the bot**:
-   ```bash
-   docker compose up -d --build
-   ```
+- **First-run slash commands** take ~1 hour to register globally. For development, change the `Command::set_global_commands` call to `Command::create_global_command` on a test guild for instant registration.
+- **Voice connections** are 5-min idle auto-disconnect (configurable in `src/utils/voice.rs`).
+- **Search results** auto-expire after 5 minutes if the user doesn't pick a track.
+- **Multi-user safety** is built-in: two users can `/play` in the same guild without race conditions.
 
 ---
 
-## 🛠️ Project Structure
+## 📜 License
 
-```
-discord-bot/
-├── .env.example
-├── .gitignore
-├── .dockerignore
-├── Cargo.toml
-├── Cargo.lock
-├── Dockerfile
-├── docker-compose.yml
-├── README.md
-└── src/
-    ├── main.rs            # Bot entrypoint, tracing & Gateway connection
-    ├── handler.rs         # Serenity interaction handler & Slash command registration
-    ├── queue.rs           # Guild queue state & LoopMode manager
-    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Embed API)
-    ├── commands/          # Modular slash command handlers
-    │   ├── mod.rs         # Command router & register_commands
-    │   ├── play.rs        # /play logic (instant enqueue & single tracks)
-    │   ├── queue.rs       # /queue & /nowplaying embed renderers
-    │   ├── control.rs     # /pause, /resume, /skip, /stop, /repeat, /volume, /leave, /help
-    │   └── events.rs      # Songbird TrackEndHandler & Just-In-Time (JIT) stream loader
-    └── utils/             # Helper utilities
-        ├── mod.rs
-        ├── embed.rs       # Platform colors, source icons, duration formatting
-        └── response.rs    # Interaction response & followup helpers
-```
+MIT
