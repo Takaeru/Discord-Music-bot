@@ -408,7 +408,7 @@ impl SourceManager {
     #[allow(dead_code)]
     pub async fn extract_direct_stream(&self, url: &str) -> Result<String, String> {
         let target = url.to_string();
-        tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
             let output = Command::new("yt-dlp")
                 .args([
                     "-g",
@@ -419,9 +419,9 @@ impl SourceManager {
                     "--socket-timeout",
                     "15",
                     "--retries",
-                    "10",
+                    "3",
                     "--fragment-retries",
-                    "10",
+                    "3",
                     "--no-warnings",
                     &target,
                 ])
@@ -435,9 +435,13 @@ impl SourceManager {
                 }
             }
             Err("Failed to resolve direct audio URL".to_string())
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        });
+
+        // 20s cap — with retries 3 × socket-timeout 15s worst case would otherwise be 90s+
+        match tokio::time::timeout(std::time::Duration::from_secs(20), task).await {
+            Ok(join) => join.map_err(|e| format!("Task join error: {}", e))?,
+            Err(_) => Err("Stream URL resolution timed out after 20s".to_string()),
+        }
     }
 
     /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.
