@@ -9,6 +9,7 @@ services:
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - RUST_LOG=${RUST_LOG:-info}
+      - BOT_LANG=${BOT_LANG:-en}
     deploy:
       resources:
         limits:
