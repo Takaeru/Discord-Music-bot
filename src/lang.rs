@@ -16,6 +16,7 @@ pub struct Lang {
     pub cmd_shuffle: &'static str,
     pub cmd_repeat: &'static str,
     pub cmd_volume: &'static str,
+    pub cmd_playnext: &'static str,
     pub cmd_leave: &'static str,
     pub cmd_ping: &'static str,
     pub cmd_help: &'static str,
@@ -117,6 +118,7 @@ pub struct Lang {
     pub help_remove_clear: &'static str,
     pub help_jump: &'static str,
     pub help_volume: &'static str,
+    pub help_playnext: &'static str,
     pub help_stop_leave: &'static str,
     pub help_ping: &'static str,
 
@@ -173,6 +175,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_shuffle: "Toggle shuffle mode for the queue",
     cmd_repeat: "Set repeat mode (off, track, queue)",
     cmd_volume: "Set playback volume (0 - 100)",
+    cmd_playnext: "Add a song to play next (priority queue)",
     cmd_leave: "Disconnect the bot from the voice channel",
     cmd_ping: "Check bot latency and audio pipeline status",
     cmd_help: "Show available music commands",
@@ -268,6 +271,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_remove_clear: "Remove specific track or clear queue",
     help_jump: "Jump to a track in the queue",
     help_volume: "Set volume level",
+    help_playnext: "Add a song to play next (priority)",
     help_stop_leave: "Stop music or disconnect bot from voice",
     help_ping: "Check bot latency and audio engine status",
 
@@ -316,6 +320,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_shuffle: "Aktifkan atau matikan mode acak untuk antrean",
     cmd_repeat: "Atur mode ulang (off, track, queue)",
     cmd_volume: "Atur volume pemutaran (0 - 100)",
+    cmd_playnext: "Tambah lagu untuk diputar berikutnya (antrean prioritas)",
     cmd_leave: "Putuskan bot dari voice channel",
     cmd_ping: "Cek latensi bot dan status pipeline audio",
     cmd_help: "Tampilkan perintah musik yang tersedia",
@@ -411,6 +416,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_remove_clear: "Hapus lagu tertentu atau bersihkan antrean",
     help_jump: "Langsung lompat ke lagu di antrean",
     help_volume: "Atur level volume",
+    help_playnext: "Tambah lagu untuk diputar berikutnya (prioritas)",
     help_stop_leave: "Hentikan musik atau putuskan bot dari voice",
     help_ping: "Cek latensi bot dan status mesin audio",
 

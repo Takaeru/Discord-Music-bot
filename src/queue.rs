@@ -16,6 +16,7 @@ struct SearchEntry {
     guild_id: GuildId,
     results: Vec<TrackMetadata>,
     created_at: Instant,
+    play_next: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -71,6 +72,33 @@ impl QueueManager {
     pub async fn push_track(&self, guild_id: GuildId, track: TrackMetadata) {
         let mut map = self.queues.lock().await;
         map.entry(guild_id).or_default().push_back(track);
+    }
+
+    /// Insert track at position 1 (right after currently playing) for /playnext
+    pub async fn push_next(&self, guild_id: GuildId, track: TrackMetadata) {
+        let mut map = self.queues.lock().await;
+        let queue = map.entry(guild_id).or_default();
+        if queue.is_empty() {
+            queue.push_back(track);
+        } else {
+            queue.insert(1, track);
+        }
+    }
+
+    /// Insert multiple tracks at position 1 preserving order for /playnext playlist
+    pub async fn push_next_playlist(&self, guild_id: GuildId, tracks: Vec<TrackMetadata>) {
+        if tracks.is_empty() {
+            return;
+        }
+        let mut map = self.queues.lock().await;
+        let queue = map.entry(guild_id).or_default();
+        for (i, track) in tracks.into_iter().enumerate() {
+            if queue.is_empty() {
+                queue.push_back(track);
+            } else {
+                queue.insert(1 + i, track);
+            }
+        }
     }
 
     pub async fn push_playlist(&self, guild_id: GuildId, tracks: Vec<TrackMetadata>) {
@@ -243,16 +271,12 @@ impl QueueManager {
         map.insert(guild_id, msg_id);
     }
 
-    pub async fn get_last_message_id(&self, guild_id: GuildId) -> Option<MessageId> {
-        let map = self.last_messages.lock().await;
-        map.get(&guild_id).copied()
-    }
-
     pub async fn set_search_results(
         &self,
         msg_id: MessageId,
         guild_id: GuildId,
         results: Vec<TrackMetadata>,
+        play_next: bool,
     ) {
         let mut map = self.search_results.lock().await;
         // Cleanup expired entries while we hold the lock
@@ -263,6 +287,7 @@ impl QueueManager {
                 guild_id,
                 results,
                 created_at: Instant::now(),
+                play_next,
             },
         );
     }
@@ -278,6 +303,15 @@ impl QueueManager {
     pub async fn remove_search_results(&self, msg_id: MessageId) {
         let mut map = self.search_results.lock().await;
         map.remove(&msg_id);
+    }
+
+    /// Check if search results were created via /playnext
+    pub async fn is_search_play_next(&self, msg_id: MessageId) -> bool {
+        let map = self.search_results.lock().await;
+        map.get(&msg_id)
+            .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
+            .map(|e| e.play_next)
+            .unwrap_or(false)
     }
 
     pub async fn clear(&self, guild_id: GuildId) {

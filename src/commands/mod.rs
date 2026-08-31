@@ -19,7 +19,7 @@ use self::control::{
     handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume, handle_shuffle,
     handle_skip, handle_stop, handle_volume,
 };
-use self::play::handle_play;
+use self::play::{handle_play, handle_playnext};
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
 pub fn register_commands() -> Vec<CreateCommand> {
@@ -103,6 +103,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .max_int_value(100)
                 .required(true),
             ),
+        CreateCommand::new("playnext")
+            .description(get_lang().cmd_playnext)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "query",
+                    "Song name or URL to play next",
+                )
+                .required(true),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -132,6 +142,7 @@ pub async fn handle_command(
         "shuffle" => handle_shuffle(ctx, command, queue_mgr).await,
         "repeat" | "loop" => handle_repeat(ctx, command, queue_mgr).await,
         "volume" => handle_volume(ctx, command).await,
+        "playnext" => handle_playnext(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
@@ -222,6 +233,9 @@ async fn handle_search_play(
         }
     };
 
+    // Check if this was a /playnext search
+    let is_play_next = queue_mgr.is_search_play_next(component.message.id).await;
+
     // Consume search results to prevent double-selection
     queue_mgr.remove_search_results(component.message.id).await;
 
@@ -249,7 +263,11 @@ async fn handle_search_play(
 
     let mut track = track;
     track.requester = Some(format!("<@{}>", component.user.id));
-    queue_mgr.push_track(guild_id, track.clone()).await;
+    if is_play_next {
+        queue_mgr.push_next(guild_id, track.clone()).await;
+    } else {
+        queue_mgr.push_track(guild_id, track.clone()).await;
+    }
     queue_mgr.set_text_channel(guild_id, component.channel_id).await;
 
     if !is_currently_playing {

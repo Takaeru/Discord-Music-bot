@@ -40,3 +40,4 @@ logs/
 .DS_Store
 Thumbs.db
 PR_MESSAGE.md
+graphify-out/

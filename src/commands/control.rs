@@ -448,6 +448,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .title(get_lang().help_title)
         .description(get_lang().help_description)
         .field("🎵 `/play <query>`", get_lang().help_play, false)
+        .field("⏭️ `/playnext <query>`", get_lang().help_playnext, false)
         .field("⏸️ `/pause` | ▶️ `/resume`", get_lang().help_pause_resume, true)
         .field("⏭️ `/skip` | 🔄 `/replay`", get_lang().help_skip_replay, true)
         .field("🔀 `/shuffle`", get_lang().help_shuffle, true)

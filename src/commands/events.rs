@@ -1,4 +1,4 @@
-use serenity::all::{CreateMessage, EditMessage, GuildId, Http};
+use serenity::all::{CreateMessage, GuildId, Http};
 use serenity::async_trait;
 use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
@@ -69,18 +69,12 @@ impl VoiceEventHandler for TrackEndHandler {
                 }
             }
         } else if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
-            if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
-                let _ = channel_id
-                    .edit_message(
-                        &self.http,
-                        old_msg_id,
-                        EditMessage::new()
-                            .content(get_lang().queue_finished_playing)
-                            .embeds(vec![])
-                            .components(vec![]),
-                    )
-                    .await;
-            }
+            let _ = channel_id
+                .send_message(
+                    &self.http,
+                    CreateMessage::new().content(get_lang().queue_finished_playing),
+                )
+                .await;
         }
 
         None
