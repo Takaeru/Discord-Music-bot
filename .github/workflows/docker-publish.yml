@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: takaeru/discord-music-bot
+  IMAGE_NAME: maha-atman/discord-music-bot
 
 jobs:
   # Build masing-masing platform di runner native (tanpa emulasi/cross-compile)
