@@ -6,6 +6,7 @@ use songbird::{
 };
 use std::sync::Arc;
 
+use crate::lang::get_lang;
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::SourceManager;
 use crate::utils::embed::build_now_playing_embed;
@@ -75,7 +76,7 @@ impl VoiceEventHandler for TrackEndHandler {
                         &self.http,
                         old_msg_id,
                         EditMessage::new()
-                            .content("📭 Antrean telah selesai diputar.")
+                            .content(get_lang().queue_finished_playing)
                             .embeds(vec![])
                             .components(vec![]),
                     )

@@ -14,6 +14,7 @@ pub struct TrackMetadata {
     pub author: Option<String>,
     pub source: String,
     pub requester: Option<String>,
+    pub view_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +26,7 @@ struct YtDlpOutput {
     thumbnail: Option<String>,
     uploader: Option<String>,
     extractor_key: Option<String>,
+    view_count: Option<u64>,
     entries: Option<Vec<YtDlpOutput>>,
     _type: Option<String>,
 }
@@ -91,6 +93,7 @@ impl SourceManager {
                 author: Some(first.artist.clone()),
                 source: "Spotify".to_string(),
                 requester: None,
+                view_count: None,
             });
 
             // For the remaining tracks in the playlist, defer audio resolution until playback
@@ -105,12 +108,29 @@ impl SourceManager {
                     author: Some(item.artist),
                     source: "Spotify".to_string(),
                     requester: None,
+                    view_count: None,
                 });
             }
 
             return Ok(resolved_tracks);
         }
 
+        self.resolve_single_query(query).await
+    }
+
+    /// Searches YouTube and returns all candidates (up to 10) for user selection.
+    /// For URLs, returns a single-element vec via resolve().
+    pub async fn search(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
+        let is_url = query.starts_with("http://") || query.starts_with("https://");
+        let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+
+        if is_url || is_spotify {
+            // URLs/Spotify → resolve directly, no search
+            return self.resolve(query).await;
+        }
+
+        // Text query → search YouTube for candidates
+        info!("Searching YouTube for candidates: {}", query);
         self.resolve_single_query(query).await
     }
 
@@ -376,6 +396,7 @@ impl SourceManager {
             author,
             source,
             requester: None,
+            view_count: entry.view_count,
         })
     }
 

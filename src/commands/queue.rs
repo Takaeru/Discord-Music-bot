@@ -1,14 +1,15 @@
 use serenity::all::{
     ButtonStyle, CommandInteraction, ComponentInteraction, ComponentInteractionDataKind, Context,
     CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption,
+    CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
 };
 use songbird::events::{Event, TrackEvent};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::events::TrackEndHandler;
+use crate::lang::{fmt, get_lang};
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::{SourceManager, TrackMetadata};
 use crate::utils::embed::{build_now_playing_embed, format_duration, source_color, source_emoji, source_icon_url};
@@ -23,6 +24,9 @@ pub fn build_queue_view(
     page: usize,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let total_tracks = queue.len();
+    if total_tracks == 0 {
+        return (CreateEmbed::new().title(get_lang().queue_empty_title).description(get_lang().queue_empty_desc), vec![]);
+    }
     let total_pages = ((total_tracks as f64) / (PAGE_SIZE as f64)).ceil() as usize;
     let total_pages = total_pages.max(1);
     let current_page = page.min(total_pages - 1);
@@ -48,8 +52,9 @@ pub fn build_queue_view(
 
             if i == 0 {
                 desc.push_str(&format!(
-                    "**▶️ Now Playing:**\n{}[**{}**]({}) • `{}` (`{}`){}\n\n**Up Next:**\n",
-                    prefix, track.title, track.url, track.source, dur, req_str
+                    "{}{}[**{}**]({}) • `{}` (`{}`){}\n\n{}",
+                    get_lang().now_playing_label, prefix, track.title, track.url, track.source, dur, req_str,
+                    get_lang().up_next_label
                 ));
             } else {
                 desc.push_str(&format!(
@@ -60,7 +65,7 @@ pub fn build_queue_view(
         }
     } else {
         // Page 2+: Show tracks in current page range
-        desc.push_str(&format!("**📋 Queue (Page {}/{}):**\n", current_page + 1, total_pages));
+        desc.push_str(&fmt(get_lang().queue_page_header, &[&(current_page + 1), &total_pages]));
         for (i, track) in page_tracks.iter().enumerate() {
             let actual_idx = start_idx + i;
             let dur = format_duration(track.duration);
@@ -77,35 +82,32 @@ pub fn build_queue_view(
     }
 
     if current_page == 0 && total_tracks > PAGE_SIZE {
-        desc.push_str(&format!("\n*...and {} more tracks in queue*", total_tracks - PAGE_SIZE));
+        desc.push_str(&fmt(get_lang().more_tracks, &[&(total_tracks - PAGE_SIZE)]));
     }
 
-    let shuffle_status_str = if is_shuffled { "🔀 Shuffled (On)" } else { "➡️ Sequential (Off)" };
+    let shuffle_status_str = if is_shuffled { get_lang().shuffle_on } else { get_lang().shuffle_off };
 
     let mut embed = CreateEmbed::new()
         .author(
-            CreateEmbedAuthor::new(format!("Current Music Queue ({})", first_track.source))
+            CreateEmbedAuthor::new(fmt(get_lang().queue_author_label, &[&first_track.source]))
                 .icon_url(source_icon_url(&first_track.source))
                 .url(&first_track.url),
         )
-        .title("📋 Music Queue")
+        .title(get_lang().queue_title)
         .description(desc)
-        .field("📊 Total Tracks", format!("{}", total_tracks), true)
-        .field("⏱️ Total Duration", format_duration(Some(total_duration)), true)
+        .field(get_lang().field_total_tracks, format!("{}", total_tracks), true)
+        .field(get_lang().field_total_duration, format_duration(Some(total_duration)), true)
         .field(
-            "🔁 Repeat Mode",
+            get_lang().field_repeat_mode,
             format!("{} {}", loop_mode.emoji(), loop_mode.as_str()),
             true,
         )
-        .field("🔀 Random Mode", shuffle_status_str, true)
+        .field(get_lang().field_random_mode, shuffle_status_str, true)
         .footer(
-            CreateEmbedFooter::new(format!(
-                "Page {}/{} | Platform: {} | Loop: {} | Random: {}",
-                current_page + 1,
-                total_pages,
-                first_track.source,
-                loop_mode.as_str(),
-                if is_shuffled { "On" } else { "Off" }
+            CreateEmbedFooter::new(fmt(
+                get_lang().queue_footer,
+                &[&(current_page + 1), &total_pages, &first_track.source, &loop_mode.as_str(),
+                  &if is_shuffled { get_lang().queue_footer_shuffle_active } else { get_lang().queue_footer_shuffle_inactive }]
             ))
             .icon_url(source_icon_url(&first_track.source)),
         )
@@ -126,9 +128,9 @@ pub fn build_queue_view(
         }
 
         let desc_label = if actual_idx == 0 {
-            format!("▶️ Currently Playing ({})", track.source)
+            fmt(get_lang().currently_playing, &[&track.source])
         } else {
-            format!("Jump to track #{} ({})", actual_idx, track.source)
+            fmt(get_lang().queue_track_jump_desc, &[&actual_idx, &track.source])
         };
 
         select_options.push(
@@ -146,7 +148,7 @@ pub fn build_queue_view(
                 options: select_options,
             },
         )
-        .placeholder("🎵 Choose a song from the list to jump & play directly...");
+        .placeholder(get_lang().queue_select_placeholder);
 
         action_rows.push(CreateActionRow::SelectMenu(select_menu));
     }
@@ -160,7 +162,7 @@ pub fn build_queue_view(
         let is_playing = actual_idx == 0;
 
         let label = if is_playing {
-            "▶️ #0 (Playing)".to_string()
+            get_lang().playing_indicator.to_string()
         } else {
             format!("▶️ #{:02}", actual_idx)
         };
@@ -190,7 +192,7 @@ pub fn build_queue_view(
 
     // Navigation and Control Buttons
     let prev_button = CreateButton::new(format!("queue_page:{}", current_page.saturating_sub(1)))
-        .label("◀️ Prev")
+        .label(get_lang().btn_prev)
         .style(ButtonStyle::Primary)
         .disabled(current_page == 0);
 
@@ -200,16 +202,16 @@ pub fn build_queue_view(
         .disabled(true);
 
     let next_button = CreateButton::new(format!("queue_page:{}", current_page + 1))
-        .label("Next ▶️")
+        .label(get_lang().btn_next)
         .style(ButtonStyle::Primary)
         .disabled(current_page + 1 >= total_pages);
 
     let shuffle_button = CreateButton::new("queue_shuffle")
-        .label(if is_shuffled { "🔀 Random: ON" } else { "🔀 Random: OFF" })
+        .label(if is_shuffled { get_lang().btn_random_on } else { get_lang().btn_random_off })
         .style(if is_shuffled { ButtonStyle::Success } else { ButtonStyle::Secondary });
 
     let skip_button = CreateButton::new("queue_skip")
-        .label("⏭️ Skip")
+        .label(get_lang().btn_skip_queue)
         .style(ButtonStyle::Secondary);
 
     action_rows.push(CreateActionRow::Buttons(vec![
@@ -234,7 +236,7 @@ pub async fn handle_queue(ctx: &Context, command: &CommandInteraction, queue_mgr
     let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
 
     if queue.is_empty() {
-        let _ = send_response(ctx, command, "📭 The queue is currently empty.", true).await;
+        let _ = send_response(ctx, command, get_lang().queue_empty_msg, true).await;
         return;
     }
 
@@ -300,7 +302,7 @@ pub async fn handle_queue_component(
                     &ctx.http,
                     CreateInteractionResponse::UpdateMessage(
                         CreateInteractionResponseMessage::new()
-                            .content("📭 The queue is currently empty.")
+                            .content(get_lang().queue_empty_msg)
                             .embeds(vec![])
                             .components(vec![]),
                     ),
@@ -332,7 +334,7 @@ pub async fn handle_queue_component(
                     &ctx.http,
                     CreateInteractionResponse::UpdateMessage(
                         CreateInteractionResponseMessage::new()
-                            .content("📭 The queue is currently empty.")
+                            .content(get_lang().queue_empty_msg)
                             .embeds(vec![])
                             .components(vec![]),
                     ),
@@ -367,6 +369,9 @@ pub async fn handle_queue_component(
 
         if let Some(idx) = target_idx {
             if idx > 0 {
+                // Defer BEFORE expensive create_input (yt-dlp + ffmpeg can take 2-8s)
+                let _ = component.defer(&ctx.http).await;
+
                 if let Some(target_track) = queue_mgr.jump_to(guild_id, idx).await {
                     let manager = songbird::get(ctx).await.unwrap();
                     if let Some(handler_lock) = manager.get(guild_id) {
@@ -403,14 +408,12 @@ pub async fn handle_queue_component(
 
         if queue.is_empty() {
             let _ = component
-                .create_response(
+                .create_followup(
                     &ctx.http,
-                    CreateInteractionResponse::UpdateMessage(
-                        CreateInteractionResponseMessage::new()
-                            .content("📭 The queue is currently empty.")
-                            .embeds(vec![])
-                            .components(vec![]),
-                    ),
+                    CreateInteractionResponseFollowup::new()
+                        .content(get_lang().queue_empty_msg)
+                        .embeds(Vec::<CreateEmbed>::new())
+                        .components(Vec::<CreateActionRow>::new()),
                 )
                 .await;
             return;
@@ -419,16 +422,20 @@ pub async fn handle_queue_component(
         let (embed, components) = build_queue_view(&queue, loop_mode, is_shuffled, 0);
 
         let _ = component
-            .create_response(
+            .create_followup(
                 &ctx.http,
-                CreateInteractionResponse::UpdateMessage(
-                    CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .components(components),
-                ),
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(components),
             )
             .await;
     } else if custom_id == "queue_skip" {
+        // Defer — next track resolution (yt-dlp) can take 2-8s
+        let _ = component.defer(&ctx.http).await;
+
+        // Remember what's playing before skip
+        let old_track = queue_mgr.get_current(guild_id).await;
+
         let manager = songbird::get(ctx).await.unwrap();
         if let Some(handler_lock) = manager.get(guild_id) {
             let handler = handler_lock.lock().await;
@@ -438,22 +445,34 @@ pub async fn handle_queue_component(
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // Poll for next track (TrackEndHandler fires asynchronously)
+        let mut next_track: Option<crate::source::TrackMetadata> = None;
+        for _ in 0..25 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(candidate) = queue_mgr.get_current(guild_id).await {
+                let changed = match &old_track {
+                    Some(old) => candidate.title != old.title || candidate.stream_url != old.stream_url,
+                    None => true,
+                };
+                if changed {
+                    next_track = Some(candidate);
+                    break;
+                }
+            }
+        }
 
         let queue = queue_mgr.get_queue(guild_id).await;
         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
         let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
 
-        if queue.is_empty() {
+        if queue.is_empty() || next_track.is_none() {
             let _ = component
-                .create_response(
+                .create_followup(
                     &ctx.http,
-                    CreateInteractionResponse::UpdateMessage(
-                        CreateInteractionResponseMessage::new()
-                            .content("📭 The queue is now empty.")
-                            .embeds(vec![])
-                            .components(vec![]),
-                    ),
+                    CreateInteractionResponseFollowup::new()
+                        .content(get_lang().queue_now_empty)
+                        .embeds(Vec::<CreateEmbed>::new())
+                        .components(Vec::<CreateActionRow>::new()),
                 )
                 .await;
             return;
@@ -462,13 +481,11 @@ pub async fn handle_queue_component(
         let (embed, components) = build_queue_view(&queue, loop_mode, is_shuffled, 0);
 
         let _ = component
-            .create_response(
+            .create_followup(
                 &ctx.http,
-                CreateInteractionResponse::UpdateMessage(
-                    CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .components(components),
-                ),
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(components),
             )
             .await;
     } else if custom_id == "queue_stop" {
@@ -484,7 +501,7 @@ pub async fn handle_queue_component(
                 &ctx.http,
                 CreateInteractionResponse::UpdateMessage(
                     CreateInteractionResponseMessage::new()
-                        .content("⏹️ Playback stopped and queue cleared.")
+                        .content(get_lang().stopped_and_cleared)
                         .embeds(vec![])
                         .components(vec![]),
                 ),
@@ -529,6 +546,6 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
             )
             .await;
     } else {
-        let _ = send_response(ctx, command, "⚠️ Nothing is currently playing.", false).await;
+        let _ = send_response(ctx, command, get_lang().nothing_playing, false).await;
     }
 }

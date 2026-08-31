@@ -3,10 +3,20 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GuildId, MessageId};
 use std::collections::{HashMap, VecDeque};
+use crate::lang::get_lang;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::source::TrackMetadata;
+
+const SEARCH_TTL_SECS: u64 = 300; // 5 minutes
+
+struct SearchEntry {
+    guild_id: GuildId,
+    results: Vec<TrackMetadata>,
+    created_at: Instant,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LoopMode {
@@ -19,9 +29,9 @@ pub enum LoopMode {
 impl LoopMode {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LoopMode::Off => "Off",
-            LoopMode::Track => "Track (1 Song)",
-            LoopMode::Queue => "Entire Queue",
+            LoopMode::Off => get_lang().loop_off,
+            LoopMode::Track => get_lang().loop_track,
+            LoopMode::Queue => get_lang().loop_queue,
         }
     }
 
@@ -41,6 +51,7 @@ pub struct QueueManager {
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
+    search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
 }
 
 impl QueueManager {
@@ -51,6 +62,7 @@ impl QueueManager {
             shuffled: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
+            search_results: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -222,6 +234,38 @@ impl QueueManager {
         map.get(&guild_id).copied()
     }
 
+    pub async fn set_search_results(
+        &self,
+        msg_id: MessageId,
+        guild_id: GuildId,
+        results: Vec<TrackMetadata>,
+    ) {
+        let mut map = self.search_results.lock().await;
+        // Cleanup expired entries while we hold the lock
+        map.retain(|_, entry| entry.created_at.elapsed().as_secs() < SEARCH_TTL_SECS);
+        map.insert(
+            msg_id,
+            SearchEntry {
+                guild_id,
+                results,
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    pub async fn get_search_results(&self, msg_id: MessageId) -> Vec<TrackMetadata> {
+        let map = self.search_results.lock().await;
+        map.get(&msg_id)
+            .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
+            .map(|e| e.results.clone())
+            .unwrap_or_default()
+    }
+
+    pub async fn remove_search_results(&self, msg_id: MessageId) {
+        let mut map = self.search_results.lock().await;
+        map.remove(&msg_id);
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
@@ -233,5 +277,7 @@ impl QueueManager {
         tc_map.remove(&guild_id);
         let mut msg_map = self.last_messages.lock().await;
         msg_map.remove(&guild_id);
+        let mut sr_map = self.search_results.lock().await;
+        sr_map.retain(|_, entry| entry.guild_id != guild_id);
     }
 }
