@@ -552,11 +552,8 @@ pub async fn handle_music_component(
             }
         }
         "music_skip" => {
-            // Defer — next track resolution (yt-dlp) can take 2-8s
+            // Defer immediately, then stop current track
             let _ = component.defer(&ctx.http).await;
-
-            // Remember what's playing before skip
-            let old_track = queue_mgr.get_current(guild_id).await;
 
             let manager = songbird::get(ctx).await.unwrap();
             if let Some(handler_lock) = manager.get(guild_id) {
@@ -567,44 +564,14 @@ pub async fn handle_music_component(
                 }
             }
 
-            // Poll for next track (TrackEndHandler advances queue async)
-            let mut next_track = None;
-            for _ in 0..25 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                if let Some(candidate) = queue_mgr.get_current(guild_id).await {
-                    // Check if track actually changed
-                    if old_track.as_ref().map(|t| &t.title) != Some(&candidate.title) {
-                        next_track = Some(candidate);
-                        break;
-                    }
-                } else {
-                    // Queue is empty — no next track
-                    break;
-                }
-            }
-
-            if let Some(current_track) = next_track {
-                let queue = queue_mgr.get_queue(guild_id).await;
-                let upcoming = queue.len().saturating_sub(1);
-                let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-                let (embed, row) = build_now_playing_embed(&current_track, upcoming, loop_mode, false);
-                let _ = component
-                    .create_followup(
-                        &ctx.http,
-                        CreateInteractionResponseFollowup::new()
-                            .embed(embed)
-                            .components(vec![row]),
-                    )
-                    .await;
-            } else {
-                let _ = component
-                    .create_followup(
-                        &ctx.http,
-                        CreateInteractionResponseFollowup::new()
-                            .content(get_lang().queue_finished),
-                    )
-                    .await;
-            }
+            // TrackEndHandler will advance the queue and send the now-playing message
+            let _ = component
+                .create_followup(
+                    &ctx.http,
+                    CreateInteractionResponseFollowup::new()
+                        .content(get_lang().skipped_current),
+                )
+                .await;
         }
         "music_loop" => {
             let current_mode = queue_mgr.get_loop_mode(guild_id).await;

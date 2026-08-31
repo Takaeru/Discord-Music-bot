@@ -430,11 +430,8 @@ pub async fn handle_queue_component(
             )
             .await;
     } else if custom_id == "queue_skip" {
-        // Defer — next track resolution (yt-dlp) can take 2-8s
+        // Defer immediately, then stop current track
         let _ = component.defer(&ctx.http).await;
-
-        // Remember what's playing before skip
-        let old_track = queue_mgr.get_current(guild_id).await;
 
         let manager = songbird::get(ctx).await.unwrap();
         if let Some(handler_lock) = manager.get(guild_id) {
@@ -445,47 +442,12 @@ pub async fn handle_queue_component(
             }
         }
 
-        // Poll for next track (TrackEndHandler fires asynchronously)
-        let mut next_track: Option<crate::source::TrackMetadata> = None;
-        for _ in 0..25 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if let Some(candidate) = queue_mgr.get_current(guild_id).await {
-                let changed = match &old_track {
-                    Some(old) => candidate.title != old.title || candidate.stream_url != old.stream_url,
-                    None => true,
-                };
-                if changed {
-                    next_track = Some(candidate);
-                    break;
-                }
-            }
-        }
-
-        let queue = queue_mgr.get_queue(guild_id).await;
-        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-        let is_shuffled = queue_mgr.get_shuffle(guild_id).await;
-
-        if queue.is_empty() || next_track.is_none() {
-            let _ = component
-                .create_followup(
-                    &ctx.http,
-                    CreateInteractionResponseFollowup::new()
-                        .content(get_lang().queue_now_empty)
-                        .embeds(Vec::<CreateEmbed>::new())
-                        .components(Vec::<CreateActionRow>::new()),
-                )
-                .await;
-            return;
-        }
-
-        let (embed, components) = build_queue_view(&queue, loop_mode, is_shuffled, 0);
-
+        // TrackEndHandler will advance the queue and send now-playing message
         let _ = component
             .create_followup(
                 &ctx.http,
                 CreateInteractionResponseFollowup::new()
-                    .embed(embed)
-                    .components(components),
+                    .content(get_lang().skipped_current),
             )
             .await;
     } else if custom_id == "queue_stop" {
