@@ -22,17 +22,18 @@ pub async fn handle_pause(ctx: &Context, command: &CommandInteraction) {
         return;
     }
 
+    let _ = command.defer(&ctx.http).await;
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
             let _ = current.pause();
-            let _ = send_response(ctx, command, get_lang().playback_paused, false).await;
+            let _ = send_followup(ctx, command, get_lang().playback_paused).await;
         } else {
-            let _ = send_response(ctx, command, get_lang().nothing_playing, true).await;
+            let _ = send_followup(ctx, command, get_lang().nothing_playing).await;
         }
     } else {
-        let _ = send_response(ctx, command, get_lang().not_connected, true).await;
+        let _ = send_followup(ctx, command, get_lang().not_connected).await;
     }
 }
 
@@ -47,17 +48,18 @@ pub async fn handle_resume(ctx: &Context, command: &CommandInteraction) {
         return;
     }
 
+    let _ = command.defer(&ctx.http).await;
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         if let Some(current) = handler.queue().current() {
             let _ = current.play();
-            let _ = send_response(ctx, command, get_lang().playback_resumed, false).await;
+            let _ = send_followup(ctx, command, get_lang().playback_resumed).await;
         } else {
-            let _ = send_response(ctx, command, get_lang().nothing_playing, true).await;
+            let _ = send_followup(ctx, command, get_lang().nothing_playing).await;
         }
     } else {
-        let _ = send_response(ctx, command, get_lang().not_connected, true).await;
+        let _ = send_followup(ctx, command, get_lang().not_connected).await;
     }
 }
 
@@ -98,14 +100,15 @@ pub async fn handle_stop(ctx: &Context, command: &CommandInteraction, queue_mgr:
         return;
     }
 
+    let _ = command.defer(&ctx.http).await;
     let manager = songbird::get(ctx).await.unwrap();
     if let Some(handler_lock) = manager.get(guild_id) {
         let handler = handler_lock.lock().await;
         handler.queue().stop();
         queue_mgr.clear(guild_id).await;
-        let _ = send_response(ctx, command, get_lang().stopped_and_cleared, false).await;
+        let _ = send_followup(ctx, command, get_lang().stopped_and_cleared).await;
     } else {
-        let _ = send_response(ctx, command, get_lang().not_connected, true).await;
+        let _ = send_followup(ctx, command, get_lang().not_connected).await;
     }
 }
 
@@ -203,11 +206,12 @@ pub async fn handle_leave(ctx: &Context, command: &CommandInteraction, queue_mgr
 
     let manager = songbird::get(ctx).await.unwrap();
     if manager.get(guild_id).is_some() {
+        // Clear queue BEFORE leaving to prevent TrackEndHandler from re-populating
+        queue_mgr.clear(guild_id).await;
         if let Err(e) = manager.leave(guild_id).await {
             let msg = fmt(get_lang().failed_leave_voice, &[&e]);
             let _ = send_response(ctx, command, &msg, true).await;
         } else {
-            queue_mgr.clear(guild_id).await;
             let _ = send_response(ctx, command, get_lang().disconnected, false).await;
         }
     } else {

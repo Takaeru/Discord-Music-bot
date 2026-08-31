@@ -13,7 +13,7 @@ use crate::lang::{fmt, get_lang};
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::{SourceManager, TrackMetadata};
 use crate::utils::embed::{build_now_playing_embed, format_duration, source_color, source_emoji, source_icon_url};
-use crate::utils::response::send_response;
+use crate::utils::response::{send_followup, send_response};
 
 const PAGE_SIZE: usize = 10;
 
@@ -516,6 +516,8 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
         None => return,
     };
 
+    let _ = command.defer(&ctx.http).await;
+
     if let Some(current) = queue_mgr.get_current(guild_id).await {
         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
         let queue_len = queue_mgr.get_queue(guild_id).await.len();
@@ -536,16 +538,14 @@ pub async fn handle_nowplaying(ctx: &Context, command: &CommandInteraction, queu
         let (embed, action_row) = build_now_playing_embed(&current, upcoming_count, loop_mode, is_paused);
 
         let _ = command
-            .create_response(
+            .create_followup(
                 &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .components(vec![action_row]),
-                ),
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
             )
             .await;
     } else {
-        let _ = send_response(ctx, command, get_lang().nothing_playing, false).await;
+        let _ = send_followup(ctx, command, get_lang().nothing_playing).await;
     }
 }

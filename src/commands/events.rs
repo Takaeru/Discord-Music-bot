@@ -36,6 +36,9 @@ impl VoiceEventHandler for TrackEndHandler {
             let next_handle = handler.enqueue_input(input).await;
             let _ = next_handle.set_volume(0.8);
 
+            // Mark as current track AFTER enqueue succeeds
+            self.queue_mgr.set_current_track(self.guild_id, track.clone()).await;
+
             if mode == LoopMode::Track {
                 let _ = next_handle.enable_loop();
             }
@@ -57,10 +60,6 @@ impl VoiceEventHandler for TrackEndHandler {
             let (embed, action_row) = build_now_playing_embed(&track, upcoming, mode, false);
 
             if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
-                if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
-                    let _ = channel_id.delete_message(&self.http, old_msg_id).await;
-                }
-
                 let create_msg = CreateMessage::new()
                     .embed(embed)
                     .components(vec![action_row]);

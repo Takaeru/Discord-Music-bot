@@ -47,6 +47,7 @@ impl LoopMode {
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
+    current_track: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
@@ -58,6 +59,7 @@ impl QueueManager {
     pub fn new() -> Self {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
+            current_track: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
@@ -96,8 +98,20 @@ impl QueueManager {
     }
 
     pub async fn get_current(&self, guild_id: GuildId) -> Option<TrackMetadata> {
+        // Check the authoritative current_track first (set when track actually starts playing)
+        let ct_map = self.current_track.lock().await;
+        if let Some(track) = ct_map.get(&guild_id) {
+            return Some(track.clone());
+        }
+        // Fallback to queue front
         let map = self.queues.lock().await;
         map.get(&guild_id).and_then(|q| q.front().cloned())
+    }
+
+    /// Set the currently playing track (called from TrackEndHandler after enqueue)
+    pub async fn set_current_track(&self, guild_id: GuildId, track: TrackMetadata) {
+        let mut map = self.current_track.lock().await;
+        map.insert(guild_id, track);
     }
 
     pub async fn get_queue(&self, guild_id: GuildId) -> Vec<TrackMetadata> {
@@ -269,6 +283,8 @@ impl QueueManager {
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
+        let mut ct_map = self.current_track.lock().await;
+        ct_map.remove(&guild_id);
         let mut loop_map = self.loop_modes.lock().await;
         loop_map.remove(&guild_id);
         let mut shuf_map = self.shuffled.lock().await;

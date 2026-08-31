@@ -192,6 +192,9 @@ pub async fn handle_play(
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
+            // Mark as current track
+            queue_mgr.set_current_track(guild_id, track.clone()).await;
+
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
             }
@@ -235,6 +238,9 @@ pub async fn handle_play(
             let input = source_mgr.create_input(&first_track.stream_url).await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
+
+            // Mark as current track
+            queue_mgr.set_current_track(guild_id, first_track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
