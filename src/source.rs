@@ -338,9 +338,9 @@ impl SourceManager {
                     }
                 }
             } else {
-                // For search queries or single video results, pick the first result
-                if let Some(first) = entries.into_iter().next() {
-                    if let Some(track) = Self::parse_single_entry(first, source_hint) {
+                // For search queries, return all candidates
+                for entry in entries.into_iter() {
+                    if let Some(track) = Self::parse_single_entry(entry, source_hint) {
                         tracks.push(track);
                     }
                 }
