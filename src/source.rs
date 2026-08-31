@@ -292,28 +292,32 @@ impl SourceManager {
 
         info!("Resolving query via yt-dlp: {}", search_target);
 
-        let output = tokio::task::spawn_blocking(move || {
-            let mut cmd = Command::new("yt-dlp");
-            cmd.args([
-                "-J",
-                "--default-search",
-                "ytsearch",
-                "--no-warnings",
-            ]);
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || {
+                let mut cmd = Command::new("yt-dlp");
+                cmd.args([
+                    "-J",
+                    "--default-search",
+                    "ytsearch",
+                    "--no-warnings",
+                ]);
 
-            if has_playlist {
-                // Unlimited playlist loading
-                cmd.arg("--flat-playlist");
-            } else if is_url {
-                cmd.arg("--no-playlist");
-            } else {
-                cmd.arg("--flat-playlist");
-            }
+                if has_playlist {
+                    // Unlimited playlist loading
+                    cmd.arg("--flat-playlist");
+                } else if is_url {
+                    cmd.arg("--no-playlist");
+                } else {
+                    cmd.arg("--flat-playlist");
+                }
 
-            cmd.arg(&search_target);
-            cmd.output()
-        })
+                cmd.arg(&search_target);
+                cmd.output()
+            }),
+        )
         .await
+        .map_err(|_| "yt-dlp timed out after 30 seconds".to_string())?
         .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
