@@ -107,6 +107,59 @@ The bot will register 19 global slash commands on first startup (takes ~1 hour f
 
 ---
 
+## 🌐 VPS / Ubuntu Server Deployment
+
+To run this bot on an Ubuntu VPS:
+
+1. **Clone repository**:
+   ```bash
+   git clone <your-repo-url> /opt/discord-bot
+   cd /opt/discord-bot
+   ```
+2. **Setup environment**:
+   ```bash
+   cp .env.example .env
+   nano .env # Paste your DISCORD_BOT_TOKEN
+   ```
+3. **Start the bot**:
+   ```bash
+   docker compose up -d --build
+   ```
+
+---
+
+## 🛠️ Project Structure
+
+```
+discord-bot/
+├── .env.example
+├── .gitignore
+├── .dockerignore
+├── Cargo.toml
+├── Cargo.lock
+├── Dockerfile
+├── docker-compose.yml
+├── README.md
+└── src/
+    ├── main.rs            # Bot entrypoint, tracing & Gateway connection
+    ├── handler.rs         # Serenity interaction handler & Slash command registration
+    ├── queue.rs           # Guild queue state & LoopMode manager
+    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Embed API)
+    ├── lang.rs            # Bilingual string tables (EN / ID) — all user-facing text
+    ├── commands/          # Modular slash command handlers
+    │   ├── mod.rs         # Command router & registration
+    │   ├── play.rs        # /play, /playnext — search, playlists, JIT streaming
+    │   ├── control.rs     # /pause, /resume, /skip, /stop, /jump, /volume, /leave
+    │   ├── queue.rs       # /queue — pagination, select-menu jump, skip/stop buttons
+    │   └── events.rs      # TrackEndHandler — queue advance, now-playing card
+    └── utils/
+        ├── embed.rs       # Rich embed & button helpers
+        ├── response.rs    # Shared response/error helpers
+        └── voice.rs       # Voice channel & idle-timeout management
+```
+
+---
+
 ## 🌐 Multi-Language
 
 | Code | Language | Notes |
