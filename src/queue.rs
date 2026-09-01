@@ -215,10 +215,18 @@ impl QueueManager {
     }
 
     pub async fn jump_to(&self, guild_id: GuildId, index: usize) -> Option<TrackMetadata> {
+        let mode = self.get_loop_mode(guild_id).await;
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
             if index < queue.len() {
-                queue.drain(0..index);
+                if mode == LoopMode::Queue || mode == LoopMode::Track {
+                    // Repeat modes: rotate instead of delete — jumped-over songs
+                    // wrap to the back so the rotation/loop never loses tracks.
+                    queue.rotate_left(index);
+                } else {
+                    // No loop: skip tracks (remove them from the queue)
+                    queue.drain(0..index);
+                }
                 queue.front().cloned()
             } else {
                 None

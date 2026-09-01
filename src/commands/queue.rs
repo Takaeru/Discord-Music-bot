@@ -382,6 +382,9 @@ pub async fn handle_queue_component(
                         let track_handle = handler.enqueue_input(input).await;
                         let _ = track_handle.set_volume(0.8);
 
+                        // Mark as current track so now-playing reports the jumped-to song
+                        queue_mgr.set_current_track(guild_id, target_track.clone()).await;
+
                         let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
                         if loop_mode == LoopMode::Track {
                             let _ = track_handle.enable_loop();
