@@ -14,6 +14,7 @@ pub struct TrackMetadata {
     pub author: Option<String>,
     pub source: String,
     pub requester: Option<String>,
+    pub view_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +26,7 @@ struct YtDlpOutput {
     thumbnail: Option<String>,
     uploader: Option<String>,
     extractor_key: Option<String>,
+    view_count: Option<u64>,
     entries: Option<Vec<YtDlpOutput>>,
     _type: Option<String>,
 }
@@ -91,6 +93,7 @@ impl SourceManager {
                 author: Some(first.artist.clone()),
                 source: "Spotify".to_string(),
                 requester: None,
+                view_count: None,
             });
 
             // For the remaining tracks in the playlist, defer audio resolution until playback
@@ -105,12 +108,29 @@ impl SourceManager {
                     author: Some(item.artist),
                     source: "Spotify".to_string(),
                     requester: None,
+                    view_count: None,
                 });
             }
 
             return Ok(resolved_tracks);
         }
 
+        self.resolve_single_query(query).await
+    }
+
+    /// Searches YouTube and returns all candidates (up to 10) for user selection.
+    /// For URLs, returns a single-element vec via resolve().
+    pub async fn search(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
+        let is_url = query.starts_with("http://") || query.starts_with("https://");
+        let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+
+        if is_url || is_spotify {
+            // URLs/Spotify → resolve directly, no search
+            return self.resolve(query).await;
+        }
+
+        // Text query → search YouTube for candidates
+        info!("Searching YouTube for candidates: {}", query);
         self.resolve_single_query(query).await
     }
 
@@ -272,28 +292,32 @@ impl SourceManager {
 
         info!("Resolving query via yt-dlp: {}", search_target);
 
-        let output = tokio::task::spawn_blocking(move || {
-            let mut cmd = Command::new("yt-dlp");
-            cmd.args([
-                "-J",
-                "--default-search",
-                "ytsearch",
-                "--no-warnings",
-            ]);
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || {
+                let mut cmd = Command::new("yt-dlp");
+                cmd.args([
+                    "-J",
+                    "--default-search",
+                    "ytsearch",
+                    "--no-warnings",
+                ]);
 
-            if has_playlist {
-                // Unlimited playlist loading
-                cmd.arg("--flat-playlist");
-            } else if is_url {
-                cmd.arg("--no-playlist");
-            } else {
-                cmd.arg("--flat-playlist");
-            }
+                if has_playlist {
+                    // Unlimited playlist loading
+                    cmd.arg("--flat-playlist");
+                } else if is_url {
+                    cmd.arg("--no-playlist");
+                } else {
+                    cmd.arg("--flat-playlist");
+                }
 
-            cmd.arg(&search_target);
-            cmd.output()
-        })
+                cmd.arg(&search_target);
+                cmd.output()
+            }),
+        )
         .await
+        .map_err(|_| "yt-dlp timed out after 30 seconds".to_string())?
         .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
@@ -318,9 +342,9 @@ impl SourceManager {
                     }
                 }
             } else {
-                // For search queries or single video results, pick the first result
-                if let Some(first) = entries.into_iter().next() {
-                    if let Some(track) = Self::parse_single_entry(first, source_hint) {
+                // For search queries, return all candidates
+                for entry in entries.into_iter() {
+                    if let Some(track) = Self::parse_single_entry(entry, source_hint) {
                         tracks.push(track);
                     }
                 }
@@ -376,6 +400,7 @@ impl SourceManager {
             author,
             source,
             requester: None,
+            view_count: entry.view_count,
         })
     }
 
@@ -383,7 +408,7 @@ impl SourceManager {
     #[allow(dead_code)]
     pub async fn extract_direct_stream(&self, url: &str) -> Result<String, String> {
         let target = url.to_string();
-        tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
             let output = Command::new("yt-dlp")
                 .args([
                     "-g",
@@ -394,9 +419,9 @@ impl SourceManager {
                     "--socket-timeout",
                     "15",
                     "--retries",
-                    "10",
+                    "3",
                     "--fragment-retries",
-                    "10",
+                    "3",
                     "--no-warnings",
                     &target,
                 ])
@@ -410,9 +435,13 @@ impl SourceManager {
                 }
             }
             Err("Failed to resolve direct audio URL".to_string())
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        });
+
+        // 20s cap — with retries 3 × socket-timeout 15s worst case would otherwise be 90s+
+        match tokio::time::timeout(std::time::Duration::from_secs(20), task).await {
+            Ok(join) => join.map_err(|e| format!("Task join error: {}", e))?,
+            Err(_) => Err("Stream URL resolution timed out after 20s".to_string()),
+        }
     }
 
     /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.

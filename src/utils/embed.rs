@@ -2,6 +2,7 @@ use serenity::all::{ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmb
 use std::env;
 use std::time::Duration;
 
+use crate::lang::{fmt, get_lang};
 use crate::queue::LoopMode;
 use crate::source::TrackMetadata;
 
@@ -65,24 +66,24 @@ pub fn build_now_playing_embed(
     is_paused: bool,
 ) -> (CreateEmbed, CreateActionRow) {
     let loop_str = match loop_mode {
-        LoopMode::Off => "❌ Nonaktif",
-        LoopMode::Track => "🔂 1 Lagu",
-        LoopMode::Queue => "🔁 Semua Antrean",
+        LoopMode::Off => get_lang().loop_off,
+        LoopMode::Track => get_lang().loop_track,
+        LoopMode::Queue => get_lang().loop_queue,
     };
 
     let dur_str = format_duration(track.duration);
-    let artist_str = track.author.as_deref().unwrap_or("Unknown Artist");
+    let artist_str = track.author.as_deref().unwrap_or(get_lang().unknown_artist);
     let requester_str = track.requester.as_deref().unwrap_or("-");
 
     let mut embed = CreateEmbed::new()
-        .title("🎵 Sekarang Diputar")
+        .title(get_lang().now_playing_title)
         .description(format!("[{}]({})", track.title, track.url))
-        .field("⏱️ Durasi", dur_str, true)
-        .field("🎶 Artis", artist_str, true)
-        .field("👤 Diminta oleh", requester_str, true)
-        .field("📌 Antrian", format!("{} lagu berikutnya", upcoming_count), true)
-        .field("🔁 Loop", loop_str, true)
-        .field("\u{200b}", "🎶 Gunakan tombol di bawah untuk kontrol musik", false)
+        .field(get_lang().field_duration, dur_str, true)
+        .field(get_lang().field_artist, artist_str, true)
+        .field(get_lang().field_requested_by, requester_str, true)
+        .field(get_lang().field_queue, fmt(get_lang().queue_upcoming_count, &[&upcoming_count]), true)
+        .field(get_lang().field_loop, loop_str, true)
+        .field("\u{200b}", get_lang().music_control_hint, false)
         .color(Color::from_rgb(88, 101, 242));
 
     if let Some(thumb) = &track.thumbnail {
@@ -91,28 +92,28 @@ pub fn build_now_playing_embed(
 
     let pause_btn = if is_paused {
         CreateButton::new("music_resume")
-            .label("Resume")
+            .label(get_lang().btn_resume)
             .emoji('▶')
             .style(ButtonStyle::Primary)
     } else {
         CreateButton::new("music_pause")
-            .label("Pause")
+            .label(get_lang().btn_pause)
             .emoji('⏸')
             .style(ButtonStyle::Primary)
     };
 
     let skip_btn = CreateButton::new("music_skip")
-        .label("Skip")
+        .label(get_lang().btn_skip)
         .emoji('⏭')
         .style(ButtonStyle::Primary);
 
     let loop_btn = CreateButton::new("music_loop")
-        .label("Loop")
+        .label(get_lang().btn_loop)
         .emoji('🔁')
         .style(ButtonStyle::Secondary);
 
     let stop_btn = CreateButton::new("music_stop")
-        .label("Stop")
+        .label(get_lang().btn_stop)
         .emoji('⏹')
         .style(ButtonStyle::Danger);
 

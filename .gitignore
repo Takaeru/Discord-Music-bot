@@ -39,3 +39,5 @@ logs/
 # OS specific files
 .DS_Store
 Thumbs.db
+PR_MESSAGE.md
+graphify-out/

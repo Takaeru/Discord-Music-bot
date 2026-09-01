@@ -1,5 +1,6 @@
 mod commands;
 mod handler;
+mod lang;
 mod queue;
 mod source;
 mod utils;

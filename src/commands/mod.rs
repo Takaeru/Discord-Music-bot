@@ -9,6 +9,7 @@ use serenity::all::{
 };
 use std::sync::Arc;
 
+use crate::lang::get_lang;
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
 use crate::utils::response::send_response;
@@ -18,13 +19,13 @@ use self::control::{
     handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume, handle_shuffle,
     handle_skip, handle_stop, handle_volume,
 };
-use self::play::handle_play;
+use self::play::{handle_play, handle_playnext};
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
 pub fn register_commands() -> Vec<CreateCommand> {
     vec![
         CreateCommand::new("play")
-            .description("Play audio from YouTube, Spotify, SoundCloud, or search query")
+            .description(get_lang().cmd_play)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::String,
@@ -33,16 +34,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 )
                 .required(true),
             ),
-        CreateCommand::new("pause").description("Pause the currently playing track"),
-        CreateCommand::new("resume").description("Resume playback of the paused track"),
-        CreateCommand::new("skip").description("Skip the current track and play the next in queue"),
-        CreateCommand::new("replay").description("Replay the current track from the beginning"),
-        CreateCommand::new("stop").description("Stop playback and clear the queue"),
-        CreateCommand::new("queue").description("View the current music queue"),
-        CreateCommand::new("nowplaying").description("Show details of the currently playing track"),
-        CreateCommand::new("clear").description("Clear all upcoming tracks from the queue"),
+        CreateCommand::new("pause").description(get_lang().cmd_pause),
+        CreateCommand::new("resume").description(get_lang().cmd_resume),
+        CreateCommand::new("skip").description(get_lang().cmd_skip),
+        CreateCommand::new("replay").description(get_lang().cmd_replay),
+        CreateCommand::new("stop").description(get_lang().cmd_stop),
+        CreateCommand::new("queue").description(get_lang().cmd_queue),
+        CreateCommand::new("nowplaying").description(get_lang().cmd_nowplaying),
+        CreateCommand::new("clear").description(get_lang().cmd_clear),
         CreateCommand::new("remove")
-            .description("Remove a specific track from queue by position")
+            .description(get_lang().cmd_remove)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::Integer,
@@ -53,7 +54,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .required(true),
             ),
         CreateCommand::new("jump")
-            .description("Jump directly to a song in the queue")
+            .description(get_lang().cmd_jump)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::Integer,
@@ -63,9 +64,9 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .min_int_value(1)
                 .required(true),
             ),
-        CreateCommand::new("shuffle").description("Toggle random / shuffle mode for the queue"),
+        CreateCommand::new("shuffle").description(get_lang().cmd_shuffle),
         CreateCommand::new("repeat")
-            .description("Set repeat / loop mode (off, track, queue)")
+            .description(get_lang().cmd_repeat)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::String,
@@ -78,7 +79,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .required(true),
             ),
         CreateCommand::new("loop")
-            .description("Set repeat / loop mode (off, track, queue)")
+            .description(get_lang().cmd_repeat)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::String,
@@ -91,7 +92,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .required(true),
             ),
         CreateCommand::new("volume")
-            .description("Adjust playback volume (0 - 100)")
+            .description(get_lang().cmd_volume)
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::Integer,
@@ -102,9 +103,19 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .max_int_value(100)
                 .required(true),
             ),
-        CreateCommand::new("leave").description("Disconnect the bot from the voice channel"),
-        CreateCommand::new("ping").description("Check bot latency and audio pipeline status"),
-        CreateCommand::new("help").description("Show available music commands"),
+        CreateCommand::new("playnext")
+            .description(get_lang().cmd_playnext)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "query",
+                    "Song name or URL to play next",
+                )
+                .required(true),
+            ),
+        CreateCommand::new("leave").description(get_lang().cmd_leave),
+        CreateCommand::new("ping").description(get_lang().cmd_ping),
+        CreateCommand::new("help").description(get_lang().cmd_help),
     ]
 }
 
@@ -131,11 +142,12 @@ pub async fn handle_command(
         "shuffle" => handle_shuffle(ctx, command, queue_mgr).await,
         "repeat" | "loop" => handle_repeat(ctx, command, queue_mgr).await,
         "volume" => handle_volume(ctx, command).await,
+        "playnext" => handle_playnext(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
         _ => {
-            let _ = send_response(ctx, command, "⚠️ Unknown command.", false).await;
+            let _ = send_response(ctx, command, get_lang().unknown_command, false).await;
         }
     }
 }
@@ -152,5 +164,146 @@ pub async fn handle_component(
         handle_queue_component(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id.starts_with("music_") {
         handle_music_component(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id == "search_play" {
+        handle_search_play(ctx, component, source_mgr, queue_mgr).await;
+    }
+}
+
+async fn handle_search_play(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    use serenity::all::{ComponentInteractionDataKind, CreateInteractionResponseFollowup};
+    use songbird::events::{Event, TrackEvent};
+
+    use crate::commands::events::TrackEndHandler;
+    use crate::queue::LoopMode;
+    use crate::utils::embed::build_now_playing_embed;
+    use crate::utils::voice::check_voice_channel;
+
+    let guild_id = match component.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    // Voice channel check — must be in VC to select a track
+    if let Err(msg) = check_voice_channel(ctx, guild_id, component.user.id) {
+        let _ = component
+            .create_response(
+                &ctx.http,
+                serenity::all::CreateInteractionResponse::Message(
+                    serenity::all::CreateInteractionResponseMessage::new()
+                        .content(msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    let selected_index = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().and_then(|v| v.parse::<usize>().ok())
+        }
+        _ => None,
+    };
+
+    let idx = match selected_index {
+        Some(i) => i,
+        None => return,
+    };
+
+    let results = queue_mgr.get_search_results(component.message.id).await;
+    let track = match results.get(idx) {
+        Some(t) => t.clone(),
+        None => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    // Check if this was a /playnext search
+    let is_play_next = queue_mgr.is_search_play_next(component.message.id).await;
+
+    // Consume search results to prevent double-selection
+    queue_mgr.remove_search_results(component.message.id).await;
+
+    // Defer before expensive create_input
+    let _ = component.defer(&ctx.http).await;
+
+    let manager = songbird::get(ctx).await.unwrap();
+    let call_lock = match manager.get(guild_id) {
+        Some(lock) => lock,
+        None => {
+            let _ = component
+                .create_followup(
+                    &ctx.http,
+                    CreateInteractionResponseFollowup::new()
+                        .content(get_lang().not_connected_vc),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let mut handler = call_lock.lock().await;
+    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+    let is_currently_playing = handler.queue().current().is_some();
+
+    let mut track = track;
+    track.requester = Some(format!("<@{}>", component.user.id));
+    if is_play_next {
+        queue_mgr.push_next(guild_id, track.clone()).await;
+    } else {
+        queue_mgr.push_track(guild_id, track.clone()).await;
+    }
+    queue_mgr.set_text_channel(guild_id, component.channel_id).await;
+
+    if !is_currently_playing {
+        let input = source_mgr.create_input(&track.stream_url).await;
+        let track_handle = handler.enqueue_input(input).await;
+        let _ = track_handle.set_volume(0.8);
+
+        if loop_mode == LoopMode::Track {
+            let _ = track_handle.enable_loop();
+        }
+
+        let _ = track_handle.add_event(
+            Event::Track(TrackEvent::End),
+            TrackEndHandler {
+                guild_id,
+                queue_mgr: queue_mgr.clone(),
+                source_mgr: source_mgr.clone(),
+                call_lock: call_lock.clone(),
+                http: ctx.http.clone(),
+            },
+        );
+    }
+
+    let queue_len = queue_mgr.get_queue(guild_id).await.len();
+    let upcoming_count = queue_len.saturating_sub(1);
+    let (embed, action_row) = build_now_playing_embed(&track, upcoming_count, loop_mode, false);
+
+    if let Ok(msg) = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .embed(embed)
+                .components(vec![action_row]),
+        )
+        .await
+    {
+        queue_mgr.set_last_message_id(guild_id, msg.id).await;
     }
 }

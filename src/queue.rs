@@ -3,10 +3,21 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GuildId, MessageId};
 use std::collections::{HashMap, VecDeque};
+use crate::lang::get_lang;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::source::TrackMetadata;
+
+const SEARCH_TTL_SECS: u64 = 300; // 5 minutes
+
+struct SearchEntry {
+    guild_id: GuildId,
+    results: Vec<TrackMetadata>,
+    created_at: Instant,
+    play_next: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LoopMode {
@@ -19,9 +30,9 @@ pub enum LoopMode {
 impl LoopMode {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LoopMode::Off => "Off",
-            LoopMode::Track => "Track (1 Song)",
-            LoopMode::Queue => "Entire Queue",
+            LoopMode::Off => get_lang().loop_off,
+            LoopMode::Track => get_lang().loop_track,
+            LoopMode::Queue => get_lang().loop_queue,
         }
     }
 
@@ -37,26 +48,62 @@ impl LoopMode {
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
+    current_track: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
+    search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
+    /// Set right before a manual stop (e.g. jump) so the old track's
+    /// TrackEndHandler does NOT advance/cycle the queue again. The first
+    /// End event consumes it (with a short TTL safety net).
+    skip_end: Arc<Mutex<HashMap<GuildId, Instant>>>,
 }
 
 impl QueueManager {
     pub fn new() -> Self {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
+            current_track: Arc::new(Mutex::new(HashMap::new())),
+            skip_end: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
+            search_results: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub async fn push_track(&self, guild_id: GuildId, track: TrackMetadata) {
         let mut map = self.queues.lock().await;
         map.entry(guild_id).or_default().push_back(track);
+    }
+
+    /// Insert track at position 1 (right after currently playing) for /playnext
+    pub async fn push_next(&self, guild_id: GuildId, track: TrackMetadata) {
+        let mut map = self.queues.lock().await;
+        let queue = map.entry(guild_id).or_default();
+        if queue.is_empty() {
+            queue.push_back(track);
+        } else {
+            queue.insert(1, track);
+        }
+    }
+
+    /// Insert multiple tracks at position 1 preserving order for /playnext playlist
+    pub async fn push_next_playlist(&self, guild_id: GuildId, tracks: Vec<TrackMetadata>) {
+        if tracks.is_empty() {
+            return;
+        }
+        let mut map = self.queues.lock().await;
+        let queue = map.entry(guild_id).or_default();
+        for (i, track) in tracks.into_iter().enumerate() {
+            if queue.is_empty() {
+                queue.push_back(track);
+            } else {
+                queue.insert(1 + i, track);
+            }
+        }
     }
 
     pub async fn push_playlist(&self, guild_id: GuildId, tracks: Vec<TrackMetadata>) {
@@ -84,8 +131,39 @@ impl QueueManager {
     }
 
     pub async fn get_current(&self, guild_id: GuildId) -> Option<TrackMetadata> {
+        // Check the authoritative current_track first (set when track actually starts playing)
+        let ct_map = self.current_track.lock().await;
+        if let Some(track) = ct_map.get(&guild_id) {
+            return Some(track.clone());
+        }
+        // Fallback to queue front
         let map = self.queues.lock().await;
         map.get(&guild_id).and_then(|q| q.front().cloned())
+    }
+
+    /// Set the currently playing track (called from TrackEndHandler after enqueue)
+    pub async fn set_current_track(&self, guild_id: GuildId, track: TrackMetadata) {
+        let mut map = self.current_track.lock().await;
+        map.insert(guild_id, track);
+    }
+
+    /// Arm the skip-end latch: the next TrackEnd event for this guild is
+    /// swallowed instead of advancing/cycling the queue. Call BEFORE
+    /// `handler.queue().stop()` / `track.stop()` in manual transitions
+    /// (jump, stop command) that already manage their own successor track.
+    pub async fn set_skip_end(&self, guild_id: GuildId) {
+        let mut map = self.skip_end.lock().await;
+        map.insert(guild_id, Instant::now());
+    }
+
+    /// Consume the skip-end latch if armed (and fresh). Returns true when
+    /// the caller (a TrackEndHandler) should do nothing.
+    pub async fn take_skip_end(&self, guild_id: GuildId) -> bool {
+        let mut map = self.skip_end.lock().await;
+        match map.remove(&guild_id) {
+            Some(armed_at) => armed_at.elapsed().as_secs() < 10,
+            None => false,
+        }
     }
 
     pub async fn get_queue(&self, guild_id: GuildId) -> Vec<TrackMetadata> {
@@ -161,10 +239,18 @@ impl QueueManager {
     }
 
     pub async fn jump_to(&self, guild_id: GuildId, index: usize) -> Option<TrackMetadata> {
+        let mode = self.get_loop_mode(guild_id).await;
         let mut map = self.queues.lock().await;
         if let Some(queue) = map.get_mut(&guild_id) {
             if index < queue.len() {
-                queue.drain(0..index);
+                if mode == LoopMode::Queue || mode == LoopMode::Track {
+                    // Repeat modes: rotate instead of delete — jumped-over songs
+                    // wrap to the back so the rotation/loop never loses tracks.
+                    queue.rotate_left(index);
+                } else {
+                    // No loop: skip tracks (remove them from the queue)
+                    queue.drain(0..index);
+                }
                 queue.front().cloned()
             } else {
                 None
@@ -222,9 +308,54 @@ impl QueueManager {
         map.get(&guild_id).copied()
     }
 
+    pub async fn set_search_results(
+        &self,
+        msg_id: MessageId,
+        guild_id: GuildId,
+        results: Vec<TrackMetadata>,
+        play_next: bool,
+    ) {
+        let mut map = self.search_results.lock().await;
+        // Cleanup expired entries while we hold the lock
+        map.retain(|_, entry| entry.created_at.elapsed().as_secs() < SEARCH_TTL_SECS);
+        map.insert(
+            msg_id,
+            SearchEntry {
+                guild_id,
+                results,
+                created_at: Instant::now(),
+                play_next,
+            },
+        );
+    }
+
+    pub async fn get_search_results(&self, msg_id: MessageId) -> Vec<TrackMetadata> {
+        let map = self.search_results.lock().await;
+        map.get(&msg_id)
+            .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
+            .map(|e| e.results.clone())
+            .unwrap_or_default()
+    }
+
+    pub async fn remove_search_results(&self, msg_id: MessageId) {
+        let mut map = self.search_results.lock().await;
+        map.remove(&msg_id);
+    }
+
+    /// Check if search results were created via /playnext
+    pub async fn is_search_play_next(&self, msg_id: MessageId) -> bool {
+        let map = self.search_results.lock().await;
+        map.get(&msg_id)
+            .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
+            .map(|e| e.play_next)
+            .unwrap_or(false)
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
+        let mut ct_map = self.current_track.lock().await;
+        ct_map.remove(&guild_id);
         let mut loop_map = self.loop_modes.lock().await;
         loop_map.remove(&guild_id);
         let mut shuf_map = self.shuffled.lock().await;
@@ -233,5 +364,7 @@ impl QueueManager {
         tc_map.remove(&guild_id);
         let mut msg_map = self.last_messages.lock().await;
         msg_map.remove(&guild_id);
+        let mut sr_map = self.search_results.lock().await;
+        sr_map.retain(|_, entry| entry.guild_id != guild_id);
     }
 }
