@@ -54,6 +54,10 @@ pub struct QueueManager {
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
+    /// Set right before a manual stop (e.g. jump) so the old track's
+    /// TrackEndHandler does NOT advance/cycle the queue again. The first
+    /// End event consumes it (with a short TTL safety net).
+    skip_end: Arc<Mutex<HashMap<GuildId, Instant>>>,
 }
 
 impl QueueManager {
@@ -61,6 +65,7 @@ impl QueueManager {
         Self {
             queues: Arc::new(Mutex::new(HashMap::new())),
             current_track: Arc::new(Mutex::new(HashMap::new())),
+            skip_end: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
@@ -140,6 +145,25 @@ impl QueueManager {
     pub async fn set_current_track(&self, guild_id: GuildId, track: TrackMetadata) {
         let mut map = self.current_track.lock().await;
         map.insert(guild_id, track);
+    }
+
+    /// Arm the skip-end latch: the next TrackEnd event for this guild is
+    /// swallowed instead of advancing/cycling the queue. Call BEFORE
+    /// `handler.queue().stop()` / `track.stop()` in manual transitions
+    /// (jump, stop command) that already manage their own successor track.
+    pub async fn set_skip_end(&self, guild_id: GuildId) {
+        let mut map = self.skip_end.lock().await;
+        map.insert(guild_id, Instant::now());
+    }
+
+    /// Consume the skip-end latch if armed (and fresh). Returns true when
+    /// the caller (a TrackEndHandler) should do nothing.
+    pub async fn take_skip_end(&self, guild_id: GuildId) -> bool {
+        let mut map = self.skip_end.lock().await;
+        match map.remove(&guild_id) {
+            Some(armed_at) => armed_at.elapsed().as_secs() < 10,
+            None => false,
+        }
     }
 
     pub async fn get_queue(&self, guild_id: GuildId) -> Vec<TrackMetadata> {

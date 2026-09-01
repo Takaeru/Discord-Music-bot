@@ -339,6 +339,10 @@ pub async fn handle_jump(
         let manager = songbird::get(ctx).await.unwrap();
         if let Some(call_lock) = manager.get(guild_id) {
             let mut handler = call_lock.lock().await;
+            // Arm the latch BEFORE stopping: the old track's End handler would
+            // otherwise re-advance the (already rotated) queue and enqueue a
+            // wrong successor. We manage the successor ourselves below.
+            queue_mgr.set_skip_end(guild_id).await;
             handler.queue().stop();
 
             let input = source_mgr.create_input(&track.stream_url).await;

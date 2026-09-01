@@ -31,6 +31,14 @@ pub struct TrackEndHandler {
 #[async_trait]
 impl VoiceEventHandler for TrackEndHandler {
     async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+        // Manual transitions (jump/stop) arm this latch BEFORE stopping the
+        // current track. The old track's End event then races the new track
+        // being enqueued; swallowing it prevents a double-advance that would
+        // rotate the wrong track to the front and misreport now-playing.
+        if self.queue_mgr.take_skip_end(self.guild_id).await {
+            return None;
+        }
+
         let mode = self.queue_mgr.get_loop_mode(self.guild_id).await;
 
         let next_track = if mode == LoopMode::Queue {
