@@ -93,6 +93,9 @@ LOG_LEVEL=INFO
 
 # Language: en (default) or id (Indonesian)
 BOT_LANG=en
+
+# Now Playing behavior: old (default, history) or new (clean channel)
+NOW_PLAYING_BEHAVIOR=old
 ```
 
 ### 3. Run with Docker
@@ -122,6 +125,49 @@ BOT_LANG=id docker compose up -d
 ### Translating to a new language
 
 Edit `src/lang.rs` and add a new `Lang` static instance following the `EN` / `ID` pattern. Then update the `get_lang()` function to detect your new code. All ~120 user-facing strings are listed in one place for easy translation.
+
+---
+
+## 🎴 Now Playing Card Behavior
+
+The Now Playing card shows the current track with playback controls (skip, stop, loop). As tracks advance, the bot reposts the card — you can choose how it handles the *previous* card via `NOW_PLAYING_BEHAVIOR`:
+
+### `old` (default) — keep history
+
+Every track posts a **new card** in the channel, and all previous cards stay behind it as a scrollable history.
+
+**Good for:** watching what was played, never missing a track, easy to click through past songs.
+
+```
+┌───────────────┐   ┌───────────────┐
+│ ▶ Track 1     │   │ ▶ Track 2     │  ← both cards remain
+└───────────────┘   └───────────────┘
+```
+
+### `new` — clean channel
+
+Each new card **deletes the previous one** before posting, so only the latest track is ever visible. When the queue finishes, the last card is edited in-place into a "finished" notice.
+
+**Good for:** a tidy channel, only ever showing what's playing right now.
+
+```
+┌───────────────┐   ┌───────────────┐
+│ ▶ Track 2     │   │ ⏹ Finished    │  ← single card, keeps updating
+└───────────────┘   └───────────────┘
+```
+
+### Switching
+
+```bash
+# Old behavior (default) — keep card history
+docker compose up -d
+
+# New behavior — clean channel
+docker compose down
+NOW_PLAYING_BEHAVIOR=new docker compose up -d
+```
+
+No restart needed to keep `old` (it's the default); the env var is only read at startup, so a restart is required to change it.
 
 ---
 

@@ -10,6 +10,7 @@ services:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - RUST_LOG=${RUST_LOG:-info}
       - BOT_LANG=${BOT_LANG:-en}
+      - NOW_PLAYING_BEHAVIOR=${NOW_PLAYING_BEHAVIOR:-old}
     deploy:
       resources:
         limits:

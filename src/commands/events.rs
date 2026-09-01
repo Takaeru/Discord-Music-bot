@@ -1,4 +1,4 @@
-use serenity::all::{CreateMessage, GuildId, Http};
+use serenity::all::{CreateMessage, EditMessage, GuildId, Http};
 use serenity::async_trait;
 use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
@@ -10,6 +10,15 @@ use crate::lang::get_lang;
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::SourceManager;
 use crate::utils::embed::build_now_playing_embed;
+
+/// Now Playing card behavior on track change, controlled by NOW_PLAYING_BEHAVIOR:
+/// - "old" (default): send a new card each track, old cards stay as channel history
+/// - "new"          : delete the old card before sending the new one (clean channel)
+fn new_behavior() -> bool {
+    std::env::var("NOW_PLAYING_BEHAVIOR")
+        .map(|v| v.trim().eq_ignore_ascii_case("new"))
+        .unwrap_or(false)
+}
 
 pub struct TrackEndHandler {
     pub guild_id: GuildId,
@@ -60,6 +69,13 @@ impl VoiceEventHandler for TrackEndHandler {
             let (embed, action_row) = build_now_playing_embed(&track, upcoming, mode, false);
 
             if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
+                // new behavior: clean up the previous card before posting the new one
+                if new_behavior() {
+                    if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                        let _ = channel_id.delete_message(&self.http, old_msg_id).await;
+                    }
+                }
+
                 let create_msg = CreateMessage::new()
                     .embed(embed)
                     .components(vec![action_row]);
@@ -69,12 +85,29 @@ impl VoiceEventHandler for TrackEndHandler {
                 }
             }
         } else if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
-            let _ = channel_id
-                .send_message(
-                    &self.http,
-                    CreateMessage::new().content(get_lang().queue_finished_playing),
-                )
-                .await;
+            if new_behavior() {
+                // new behavior: rewrite the last card into a "finished" message
+                if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                    let _ = channel_id
+                        .edit_message(
+                            &self.http,
+                            old_msg_id,
+                            EditMessage::new()
+                                .content(get_lang().queue_finished_playing)
+                                .embeds(vec![])
+                                .components(vec![]),
+                        )
+                        .await;
+                }
+            } else {
+                // old behavior: post a separate "finished" message (channel history)
+                let _ = channel_id
+                    .send_message(
+                        &self.http,
+                        CreateMessage::new().content(get_lang().queue_finished_playing),
+                    )
+                    .await;
+            }
         }
 
         None

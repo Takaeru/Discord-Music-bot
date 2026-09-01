@@ -271,6 +271,11 @@ impl QueueManager {
         map.insert(guild_id, msg_id);
     }
 
+    pub async fn get_last_message_id(&self, guild_id: GuildId) -> Option<MessageId> {
+        let map = self.last_messages.lock().await;
+        map.get(&guild_id).copied()
+    }
+
     pub async fn set_search_results(
         &self,
         msg_id: MessageId,
