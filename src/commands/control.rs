@@ -983,14 +983,7 @@ pub async fn handle_history(
         desc.push_str(&format!("\n*...and {} more unique songs in log*", total - display_limit));
     }
 
-    let storage_badge = if queue_mgr.is_cloud() {
-        get_lang().playlist_storage_cloud
-    } else {
-        get_lang().playlist_storage_local
-    };
-
-    let base_footer = fmt(get_lang().history_footer, &[&total.to_string()]);
-    let footer_str = format!("{} • {}", base_footer, storage_badge);
+    let footer_str = fmt(get_lang().history_footer, &[&total.to_string()]);
 
     let embed = CreateEmbed::new()
         .title(get_lang().history_title)

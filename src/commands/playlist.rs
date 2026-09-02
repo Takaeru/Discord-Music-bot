@@ -37,12 +37,6 @@ pub async fn handle_playlist(
         None => return,
     };
 
-    let storage_badge = if playlist_store.is_cloud() {
-        get_lang().playlist_storage_cloud
-    } else {
-        get_lang().playlist_storage_local
-    };
-
     match sub_name {
         "save" => {
             let guild_id = match command.guild_id {
@@ -96,8 +90,7 @@ pub async fn handle_playlist(
 
             let count_str = count_saved.to_string();
             let base_msg = fmt(get_lang().playlist_saved, &[&count_str, &name]);
-            let final_msg = format!("{} • *{}*", base_msg, storage_badge);
-            let _ = send_response(ctx, command, &final_msg, false).await;
+            let _ = send_response(ctx, command, &base_msg, false).await;
         }
         "load" => {
             let guild_id = match command.guild_id {
@@ -193,8 +186,7 @@ pub async fn handle_playlist(
             }
 
             let base_msg = fmt(get_lang().playlist_loaded, &[&count_str, &name]);
-            let final_msg = format!("{} • *{}*", base_msg, storage_badge);
-            let _ = send_followup(ctx, command, &final_msg).await;
+            let _ = send_followup(ctx, command, &base_msg).await;
         }
         "list" => {
             let playlists = playlist_store.list_playlists(user_id).await;
@@ -217,10 +209,9 @@ pub async fn handle_playlist(
                 .title(get_lang().playlist_list_title)
                 .description(desc)
                 .color(Color::from_rgb(88, 101, 242))
-                .footer(serenity::all::CreateEmbedFooter::new(format!(
-                    "Use /playlist load <name> • {}",
-                    storage_badge
-                )));
+                .footer(serenity::all::CreateEmbedFooter::new(
+                    "Use /playlist load <name> to play a playlist",
+                ));
 
             let _ = command
                 .create_response(
@@ -266,9 +257,8 @@ pub async fn handle_playlist(
                 .description(desc)
                 .color(Color::from_rgb(88, 101, 242))
                 .footer(serenity::all::CreateEmbedFooter::new(format!(
-                    "Total: {} tracks • {}",
-                    playlist.tracks.len(),
-                    storage_badge
+                    "Total: {} track(s) • Use /playlist load <name> to play",
+                    playlist.tracks.len()
                 )));
 
             let _ = command

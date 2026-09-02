@@ -543,11 +543,4 @@ impl QueueManager {
             });
         }
     }
-
-    pub fn is_cloud(&self) -> bool {
-        self.playlist_store
-            .as_ref()
-            .map(|s| s.is_cloud())
-            .unwrap_or(false)
-    }
 }

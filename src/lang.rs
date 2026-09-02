@@ -56,8 +56,6 @@ pub struct Lang {
     pub playlist_list_title: &'static str,
     pub playlist_list_empty: &'static str,
     pub playlist_show_title: &'static str,  // has {}
-    pub playlist_storage_cloud: &'static str,
-    pub playlist_storage_local: &'static str,
     pub history_title: &'static str,
     pub history_empty: &'static str,
     pub history_footer: &'static str,       // has {}
@@ -250,8 +248,6 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_list_title: "📋 Your Saved Playlists",
     playlist_list_empty: "ℹ️ You don't have any saved playlists yet. Use `/playlist save <name>` to save your current queue!",
     playlist_show_title: "📋 Playlist: {}",
-    playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
-    playlist_storage_local: "💾 Local File",
     history_title: "📜 Playback History Log",
     history_empty: "ℹ️ No tracks in playback history log yet.",
     history_footer: "Total: {} unique song(s) • Autoplay Reference Active",
@@ -431,8 +427,6 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_list_title: "📋 Daftar Playlist Tersimpan Kamu",
     playlist_list_empty: "ℹ️ Kamu belum memiliki playlist tersimpan. Gunakan `/playlist save <nama>` untuk menyimpan antrean saat ini!",
     playlist_show_title: "📋 Playlist: {}",
-    playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
-    playlist_storage_local: "💾 File Lokal",
     history_title: "📜 Log Riwayat Pemutaran Lagu",
     history_empty: "ℹ️ Belum ada riwayat lagu yang diputar.",
     history_footer: "Total: {} lagu unik • Acuan Autoplay Aktif",
