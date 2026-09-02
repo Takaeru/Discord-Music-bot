@@ -401,7 +401,6 @@ async fn handle_search_play(
 
     let mut track = track;
     track.requester = Some(format!("<@{}>", component.user.id));
-    queue_mgr.push_history(guild_id, track.clone()).await;
     if is_play_next {
         queue_mgr.push_next(guild_id, track.clone()).await;
     } else {
@@ -417,8 +416,9 @@ async fn handle_search_play(
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
 
-        // Mark as current track so now-playing and autoplay can reference it
+        // Mark as current track and record to history because it started playing!
         queue_mgr.set_current_track(guild_id, track.clone()).await;
+        queue_mgr.push_history(guild_id, track.clone()).await;
 
         if loop_mode == LoopMode::Track {
             let _ = track_handle.enable_loop();

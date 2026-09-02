@@ -354,6 +354,7 @@ pub async fn handle_jump(
 
             // Mark as current track so now-playing reports the jumped-to song
             queue_mgr.set_current_track(guild_id, track.clone()).await;
+            queue_mgr.push_history(guild_id, track.clone()).await;
 
             let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
             if loop_mode == LoopMode::Track {

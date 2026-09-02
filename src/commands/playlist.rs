@@ -168,6 +168,7 @@ pub async fn handle_playlist(
                 let _ = track_handle.set_volume(0.8);
 
                 queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+                queue_mgr.push_history(guild_id, first_track.clone()).await;
 
                 if loop_mode == LoopMode::Track {
                     let _ = track_handle.enable_loop();

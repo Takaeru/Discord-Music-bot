@@ -186,7 +186,6 @@ pub async fn handle_play(
     if resolved.len() == 1 {
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
-        queue_mgr.push_history(guild_id, track.clone()).await;
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -196,8 +195,9 @@ pub async fn handle_play(
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
-            // Mark as current track
+            // Mark as current track and record to history because it started playing!
             queue_mgr.set_current_track(guild_id, track.clone()).await;
+            queue_mgr.push_history(guild_id, track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -237,9 +237,6 @@ pub async fn handle_play(
         let first_track = resolved[0].clone();
 
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
-        for t in &resolved {
-            queue_mgr.push_history(guild_id, t.clone()).await;
-        }
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -249,8 +246,9 @@ pub async fn handle_play(
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
-            // Mark as current track
+            // Mark as current track and record ONLY the track that actually starts playing
             queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+            queue_mgr.push_history(guild_id, first_track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -490,7 +488,6 @@ pub async fn handle_playnext(
         let track = resolved[0].clone();
         // Use push_next instead of push_track
         queue_mgr.push_next(guild_id, track.clone()).await;
-        queue_mgr.push_history(guild_id, track.clone()).await;
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -501,6 +498,7 @@ pub async fn handle_playnext(
             let _ = track_handle.set_volume(0.8);
 
             queue_mgr.set_current_track(guild_id, track.clone()).await;
+            queue_mgr.push_history(guild_id, track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
@@ -541,9 +539,6 @@ pub async fn handle_playnext(
 
         // Insert all at position 1+ preserving order
         queue_mgr.push_next_playlist(guild_id, resolved.clone()).await;
-        for t in &resolved {
-            queue_mgr.push_history(guild_id, t.clone()).await;
-        }
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -554,6 +549,7 @@ pub async fn handle_playnext(
             let _ = track_handle.set_volume(0.8);
 
             queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+            queue_mgr.push_history(guild_id, first_track.clone()).await;
 
             if loop_mode == LoopMode::Track {
                 let _ = track_handle.enable_loop();
