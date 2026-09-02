@@ -184,41 +184,174 @@ impl SourceManager {
         self.resolve_single_query(query).await
     }
 
-    /// Resolves Spotify tracks, albums, or playlists into rich metadata using Spotify Embed API.
+    /// Resolves Spotify tracks, albums, or playlists into rich metadata using official Web API or Spotify Embed fallback.
     async fn resolve_spotify_items(&self, url: &str) -> Result<Vec<SpotifyTrackInfo>, String> {
-        let embed_url = if url.contains("/track/") {
-            let id = url
-                .split("/track/")
-                .nth(1)
-                .and_then(|s| s.split('?').next())
-                .unwrap_or("")
-                .trim_matches('/');
-            format!("https://open.spotify.com/embed/track/{}", id)
-        } else if url.contains("/playlist/") {
-            let id = url
-                .split("/playlist/")
-                .nth(1)
-                .and_then(|s| s.split('?').next())
-                .unwrap_or("")
-                .trim_matches('/');
-            format!("https://open.spotify.com/embed/playlist/{}", id)
-        } else if url.contains("/album/") {
-            let id = url
-                .split("/album/")
-                .nth(1)
-                .and_then(|s| s.split('?').next())
-                .unwrap_or("")
-                .trim_matches('/');
-            format!("https://open.spotify.com/embed/album/{}", id)
+        let (item_type, item_id) = if let Some(idx) = url.find("/track/") {
+            let id = url[idx + 7..].split('?').next().unwrap_or("").trim_matches('/');
+            ("track", id)
+        } else if let Some(idx) = url.find("/playlist/") {
+            let id = url[idx + 10..].split('?').next().unwrap_or("").trim_matches('/');
+            ("playlist", id)
+        } else if let Some(idx) = url.find("/album/") {
+            let id = url[idx + 7..].split('?').next().unwrap_or("").trim_matches('/');
+            ("album", id)
+        } else if let Some(stripped) = url.strip_prefix("spotify:track:") {
+            ("track", stripped.split('?').next().unwrap_or("").trim_matches('/'))
+        } else if let Some(stripped) = url.strip_prefix("spotify:playlist:") {
+            ("playlist", stripped.split('?').next().unwrap_or("").trim_matches('/'))
+        } else if let Some(stripped) = url.strip_prefix("spotify:album:") {
+            ("album", stripped.split('?').next().unwrap_or("").trim_matches('/'))
         } else {
             return Err("Unsupported Spotify URL format.".to_string());
         };
 
-        info!("Fetching Spotify metadata from: {}", embed_url);
+        // 1. Primary: Use official Spotify API if client token is available
+        if let Ok(token) = self.get_spotify_token().await {
+            if item_type == "track" {
+                let api_url = format!("https://api.spotify.com/v1/tracks/{}", item_id);
+                if let Ok(res) = self
+                    .http_client
+                    .get(&api_url)
+                    .header("Authorization", format!("Bearer {}", token))
+                    .send()
+                    .await
+                {
+                    if res.status().is_success() {
+                        if let Ok(track_obj) = res.json::<serde_json::Value>().await {
+                            let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let mut artists = Vec::new();
+                            if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
+                                for a in arr {
+                                    if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                        artists.push(name.to_string());
+                                    }
+                                }
+                            }
+                            let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
+                            let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                            let thumbnail = track_obj.pointer("/album/images/0/url").and_then(|u| u.as_str()).map(|s| s.to_string());
+                            let track_url = format!("https://open.spotify.com/track/{}", item_id);
+
+                            if !title.is_empty() {
+                                return Ok(vec![SpotifyTrackInfo {
+                                    title,
+                                    artist,
+                                    url: track_url,
+                                    thumbnail,
+                                    duration,
+                                }]);
+                            }
+                        }
+                    }
+                }
+            } else if item_type == "playlist" {
+                let max_items = Self::get_max_playlist_limit();
+                let limit = if max_items > 0 { max_items.min(100) } else { 100 };
+                let api_url = format!("https://api.spotify.com/v1/playlists/{}/tracks?limit={}", item_id, limit);
+                if let Ok(res) = self
+                    .http_client
+                    .get(&api_url)
+                    .header("Authorization", format!("Bearer {}", token))
+                    .send()
+                    .await
+                {
+                    if res.status().is_success() {
+                        if let Ok(json) = res.json::<serde_json::Value>().await {
+                            let mut tracks = Vec::new();
+                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                                for item in items {
+                                    let track_obj = item.get("track").unwrap_or(item);
+                                    let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    if title.is_empty() { continue; }
+                                    let mut artists = Vec::new();
+                                    if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
+                                        for a in arr {
+                                            if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                                artists.push(name.to_string());
+                                            }
+                                        }
+                                    }
+                                    let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
+                                    let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                                    let thumbnail = track_obj.pointer("/album/images/0/url").and_then(|u| u.as_str()).map(|s| s.to_string());
+                                    let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                    let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+
+                                    tracks.push(SpotifyTrackInfo {
+                                        title,
+                                        artist,
+                                        url: t_url,
+                                        thumbnail,
+                                        duration,
+                                    });
+                                }
+                            }
+                            if !tracks.is_empty() {
+                                return Ok(tracks);
+                            }
+                        }
+                    }
+                }
+            } else if item_type == "album" {
+                let max_items = Self::get_max_playlist_limit();
+                let limit = if max_items > 0 { max_items.min(50) } else { 50 };
+                let api_url = format!("https://api.spotify.com/v1/albums/{}/tracks?limit={}", item_id, limit);
+                if let Ok(res) = self
+                    .http_client
+                    .get(&api_url)
+                    .header("Authorization", format!("Bearer {}", token))
+                    .send()
+                    .await
+                {
+                    if res.status().is_success() {
+                        if let Ok(json) = res.json::<serde_json::Value>().await {
+                            let mut tracks = Vec::new();
+                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                                for track_obj in items {
+                                    let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    if title.is_empty() { continue; }
+                                    let mut artists = Vec::new();
+                                    if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
+                                        for a in arr {
+                                            if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                                artists.push(name.to_string());
+                                            }
+                                        }
+                                    }
+                                    let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
+                                    let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                                    let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                    let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+
+                                    tracks.push(SpotifyTrackInfo {
+                                        title,
+                                        artist,
+                                        url: t_url,
+                                        thumbnail: None,
+                                        duration,
+                                    });
+                                }
+                            }
+                            if !tracks.is_empty() {
+                                return Ok(tracks);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Secondary Fallback: Spotify Embed scraper
+        let embed_url = format!("https://open.spotify.com/embed/{}/{}", item_type, item_id);
+        info!("Fetching Spotify metadata from embed fallback: {}", embed_url);
 
         let resp = self
             .http_client
             .get(&embed_url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to fetch Spotify embed page: {}", e))?;
@@ -497,35 +630,73 @@ impl SourceManager {
         }
 
         let target = url.to_string();
+        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be") || url.starts_with("ytsearch");
         let ytdlp_bin = std::env::var("YTDLP_PATH").unwrap_or_else(|_| "yt-dlp".to_string());
+
         let task = tokio::task::spawn_blocking(move || {
-            let output = Command::new(&ytdlp_bin)
-                .args([
-                    "-g",
-                    "--format-sort",
-                    "acodec:opus,acodec:mp3,abr:96,proto:https",
-                    "-f",
-                    "ba[acodec=opus][abr<=128]/ba[ext=webm][abr<=128]/ba[acodec=opus]/ba[ext=webm]/http_mp3_128/ba[ext=mp3]/ba[acodec!=aac]/ba/b",
-                    "--socket-timeout",
-                    "10",
-                    "--retries",
-                    "2",
-                    "--fragment-retries",
-                    "2",
-                    "--no-warnings",
-                    "--extractor-args",
-                    "youtube:player_client=android,web",
-                    &target,
-                ])
-                .output()
-                .map_err(|e| format!("Failed to run yt-dlp -g: {}", e))?;
+            let mut cmd = Command::new(&ytdlp_bin);
+            cmd.args([
+                "-g",
+                "--format-sort",
+                "acodec:opus,acodec:mp3,abr:96,proto:https",
+                "-f",
+                "ba[acodec=opus][abr<=128]/ba[ext=webm][abr<=128]/ba[acodec=opus]/ba[ext=webm]/http_mp3_128/ba[ext=mp3]/ba[acodec!=aac]/ba/b",
+                "--socket-timeout",
+                "10",
+                "--retries",
+                "2",
+                "--fragment-retries",
+                "2",
+                "--no-warnings",
+            ]);
+
+            if is_youtube {
+                cmd.args(["--extractor-args", "youtube:player_client=android,web"]);
+            }
+
+            cmd.arg(&target);
+
+            let output = cmd.output().map_err(|e| format!("Failed to run yt-dlp -g: {}", e))?;
 
             if output.status.success() {
-                let direct = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !direct.is_empty() && direct.starts_with("http") {
-                    return Ok(direct);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(direct) = stdout.lines().filter(|l| l.starts_with("http")).last() {
+                    let direct_str = direct.trim().to_string();
+                    if !direct_str.is_empty() {
+                        return Ok(direct_str);
+                    }
                 }
             }
+
+            // Fallback: simpler format selector if strict opus/mp3 was not available
+            let mut fallback_cmd = Command::new(&ytdlp_bin);
+            fallback_cmd.args([
+                "-g",
+                "-f",
+                "ba/b",
+                "--socket-timeout",
+                "10",
+                "--retries",
+                "2",
+                "--no-warnings",
+            ]);
+            if is_youtube {
+                fallback_cmd.args(["--extractor-args", "youtube:player_client=android,web"]);
+            }
+            fallback_cmd.arg(&target);
+
+            if let Ok(fallback_out) = fallback_cmd.output() {
+                if fallback_out.status.success() {
+                    let stdout = String::from_utf8_lossy(&fallback_out.stdout);
+                    if let Some(direct) = stdout.lines().filter(|l| l.starts_with("http")).last() {
+                        let direct_str = direct.trim().to_string();
+                        if !direct_str.is_empty() {
+                            return Ok(direct_str);
+                        }
+                    }
+                }
+            }
+
             Err("Failed to resolve direct audio URL".to_string())
         });
 
