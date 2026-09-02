@@ -327,8 +327,9 @@ impl SourceManager {
     async fn resolve_single_query(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_url = query.starts_with("http://") || query.starts_with("https://");
         let has_playlist = is_url && query.contains("list=");
+        let is_soundcloud = query.contains("soundcloud.com") || query.starts_with("scsearch");
 
-        let source_hint = if query.contains("soundcloud.com") {
+        let source_hint = if is_soundcloud {
             "SoundCloud"
         } else if query.contains("youtube.com") || query.contains("youtu.be") || !is_url {
             "YouTube"
@@ -336,7 +337,7 @@ impl SourceManager {
             "Direct Stream"
         };
 
-        let search_target = if is_url || query.starts_with("ytsearch") {
+        let search_target = if is_url || query.starts_with("ytsearch") || query.starts_with("scsearch") {
             query.to_string()
         } else {
             format!("ytsearch10:{}", query)
@@ -359,16 +360,23 @@ impl SourceManager {
                 let mut cmd = Command::new(&ytdlp_bin);
                 cmd.args([
                     "-J",
-                    "--default-search",
-                    "ytsearch",
                     "--no-warnings",
                     "--socket-timeout",
                     "10",
                     "--retries",
                     "2",
-                    "--extractor-args",
-                    "youtube:player_client=android,web",
                 ]);
+
+                if is_soundcloud {
+                    cmd.args(["--default-search", "scsearch"]);
+                } else {
+                    cmd.args([
+                        "--default-search",
+                        "ytsearch",
+                        "--extractor-args",
+                        "youtube:player_client=android,web",
+                    ]);
+                }
 
                 if has_playlist {
                     cmd.arg("--flat-playlist");
@@ -422,6 +430,15 @@ impl SourceManager {
 
         if tracks.is_empty() {
             return Err("No tracks found for the requested query.".to_string());
+        }
+
+        // Prioritize official artist uploads for YouTube when not a fixed playlist
+        if source_hint == "YouTube" && !has_playlist {
+            tracks.sort_by(|a, b| {
+                let score_b = Self::score_track_officialness(b, Some(query));
+                let score_a = Self::score_track_officialness(a, Some(query));
+                score_b.cmp(&score_a)
+            });
         }
 
         self.query_cache.insert(search_target, tracks.clone()).await;
@@ -775,104 +792,185 @@ impl SourceManager {
         Ok(token)
     }
 
-    /// Searches Spotify tracks via Web API using cached anonymous token.
-    pub async fn search_spotify(&self, query: &str, limit: usize) -> Result<Vec<TrackMetadata>, String> {
-        let token = self.get_spotify_token().await?;
-        let encoded_query = percent_encoding::utf8_percent_encode(
-            query,
-            percent_encoding::NON_ALPHANUMERIC,
-        )
-        .to_string();
-        let url = format!(
-            "https://api.spotify.com/v1/search?q={}&type=track&limit={}",
-            encoded_query,
-            limit.min(10)
-        );
+    pub fn score_track_officialness(track: &TrackMetadata, query: Option<&str>) -> i32 {
+        let mut score = 0;
+        let title_lower = track.title.to_lowercase();
+        let uploader_lower = track.author.as_deref().unwrap_or("").to_lowercase();
 
-        let res = self
-            .http_client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
-            .send()
-            .await
-            .map_err(|e| format!("Spotify search HTTP error: {}", e))?;
-
-        if !res.status().is_success() {
-            return Err(format!("Spotify search failed: HTTP {}", res.status()));
+        // 1. YouTube Music Topic channel from record labels = Guaranteed official label release
+        if uploader_lower.ends_with("- topic") {
+            score += 100;
         }
 
-        let json: serde_json::Value = res
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Spotify search JSON: {}", e))?;
-
-        let mut tracks = Vec::new();
-        if let Some(items) = json
-            .get("tracks")
-            .and_then(|t| t.get("items"))
-            .and_then(|i| i.as_array())
+        // 2. VEVO, Records, Entertainment, or Official in channel name
+        if uploader_lower.contains("vevo")
+            || uploader_lower.contains("official")
+            || uploader_lower.contains("records")
+            || uploader_lower.contains("entertainment")
         {
-            for item in items {
-                let title = item
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if title.is_empty() {
-                    continue;
-                }
+            score += 60;
+        }
 
-                let artist = item
-                    .get("artists")
-                    .and_then(|a| a.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|ar| ar.get("name"))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("Spotify Artist")
-                    .to_string();
+        // 3. Official in title
+        if title_lower.contains("official video")
+            || title_lower.contains("official music video")
+            || title_lower.contains("official audio")
+            || title_lower.contains("official mv")
+            || title_lower.contains("[official]")
+            || title_lower.contains("(official)")
+        {
+            score += 40;
+        } else if title_lower.contains("mv") || title_lower.contains("music video") {
+            score += 20;
+        }
 
-                let url = item
-                    .get("external_urls")
-                    .and_then(|u| u.get("spotify"))
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let thumbnail = item
-                    .get("album")
-                    .and_then(|al| al.get("images"))
-                    .and_then(|imgs| imgs.as_array())
-                    .and_then(|imgs| imgs.first())
-                    .and_then(|img| img.get("url"))
-                    .and_then(|u| u.as_str())
-                    .map(|s| s.to_string());
-
-                let duration = item
-                    .get("duration_ms")
-                    .and_then(|d| d.as_u64())
-                    .map(Duration::from_millis);
-
-                let stream_url = format!("ytsearch1:{} - {}", artist, title);
-
-                tracks.push(TrackMetadata {
-                    title,
-                    url,
-                    stream_url,
-                    duration,
-                    thumbnail,
-                    author: Some(artist),
-                    source: "Spotify".to_string(),
-                    requester: None,
-                    view_count: None,
-                });
+        // 4. Matches artist/query if provided
+        if let Some(q) = query {
+            let q_clean = q
+                .trim_start_matches("ytsearch")
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ':')
+                .trim()
+                .to_lowercase();
+            if !q_clean.is_empty() && uploader_lower.contains(&q_clean) {
+                score += 50;
             }
         }
 
-        Ok(tracks)
+        // 5. Penalize unofficial uploads, covers, fan-edits
+        if title_lower.contains("cover") {
+            score -= 60;
+        }
+        if title_lower.contains("nightcore")
+            || title_lower.contains("slowed")
+            || title_lower.contains("reverb")
+            || title_lower.contains("remix")
+            || title_lower.contains("bass boosted")
+            || title_lower.contains("fanmade")
+            || title_lower.contains("amv")
+        {
+            score -= 80;
+        }
+        if title_lower.contains("1 hour")
+            || title_lower.contains("10 hour")
+            || title_lower.contains("loop")
+            || title_lower.contains("reaction")
+        {
+            score -= 100;
+        }
+        if uploader_lower.contains("nightcore")
+            || uploader_lower.contains("lyrics")
+            || uploader_lower.contains("covers")
+        {
+            score -= 40;
+        }
+
+        score
+    }
+
+    /// Searches Spotify tracks via Web API with graceful official Topic fallback.
+    pub async fn search_spotify(&self, query: &str, limit: usize) -> Result<Vec<TrackMetadata>, String> {
+        if let Ok(token) = self.get_spotify_token().await {
+            let encoded_query = percent_encoding::utf8_percent_encode(
+                query,
+                percent_encoding::NON_ALPHANUMERIC,
+            )
+            .to_string();
+            let url = format!(
+                "https://api.spotify.com/v1/search?q={}&type=track&limit={}",
+                encoded_query,
+                limit.min(10)
+            );
+
+            if let Ok(res) = self
+                .http_client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                )
+                .send()
+                .await
+            {
+                if res.status().is_success() {
+                    if let Ok(json) = res.json::<serde_json::Value>().await {
+                        let mut tracks = Vec::new();
+                        if let Some(items) = json
+                            .get("tracks")
+                            .and_then(|t| t.get("items"))
+                            .and_then(|i| i.as_array())
+                        {
+                            for item in items {
+                                let title = item
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if title.is_empty() {
+                                    continue;
+                                }
+
+                                let artist = item
+                                    .get("artists")
+                                    .and_then(|a| a.as_array())
+                                    .and_then(|a| a.first())
+                                    .and_then(|ar| ar.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("Spotify Artist")
+                                    .to_string();
+
+                                let url = item
+                                    .get("external_urls")
+                                    .and_then(|u| u.get("spotify"))
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                let thumbnail = item
+                                    .get("album")
+                                    .and_then(|al| al.get("images"))
+                                    .and_then(|imgs| imgs.as_array())
+                                    .and_then(|imgs| imgs.first())
+                                    .and_then(|img| img.get("url"))
+                                    .and_then(|u| u.as_str())
+                                    .map(|s| s.to_string());
+
+                                let duration = item
+                                    .get("duration_ms")
+                                    .and_then(|d| d.as_u64())
+                                    .map(Duration::from_millis);
+
+                                let stream_url = format!("ytsearch1:{} - {}", artist, title);
+
+                                tracks.push(TrackMetadata {
+                                    title,
+                                    url,
+                                    stream_url,
+                                    duration,
+                                    thumbnail,
+                                    author: Some(artist),
+                                    source: "Spotify".to_string(),
+                                    requester: None,
+                                    view_count: None,
+                                });
+                            }
+                        }
+                        if !tracks.is_empty() {
+                            return Ok(tracks);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: If Spotify Web API is unauthenticated or quota exceeded,
+        // search YouTube Music's Official Artist Topic tracks (the exact master audio tracks published on Spotify)
+        let topic_query = format!("ytsearch{}:{} Topic", limit.min(10), query);
+        let mut topic_tracks = self.resolve_single_query(&topic_query).await?;
+        for t in &mut topic_tracks {
+            t.source = "Spotify".to_string();
+        }
+        Ok(topic_tracks)
     }
 
     /// Searches SoundCloud using yt-dlp scsearch.
