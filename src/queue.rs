@@ -19,6 +19,12 @@ struct SearchEntry {
     play_next: bool,
 }
 
+#[derive(Clone)]
+pub struct RecommendEntry {
+    pub tracks: Vec<TrackMetadata>,
+    pub profile: crate::source::TasteProfile,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LoopMode {
     #[default]
@@ -103,7 +109,7 @@ pub struct QueueManager {
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
-    recommend_results: Arc<Mutex<HashMap<String, Vec<TrackMetadata>>>>,
+    recommend_results: Arc<Mutex<HashMap<String, RecommendEntry>>>,
     /// Set right before a manual stop (e.g. jump) so the old track's
     /// TrackEndHandler does NOT advance/cycle the queue again. The first
     /// End event consumes it (with a short TTL safety net).
@@ -407,14 +413,19 @@ impl QueueManager {
             .unwrap_or(false)
     }
 
-    pub async fn set_recommend_results(&self, key: String, tracks: Vec<TrackMetadata>) {
+    pub async fn set_recommend_results(&self, key: String, tracks: Vec<TrackMetadata>, profile: crate::source::TasteProfile) {
         let mut map = self.recommend_results.lock().await;
-        map.insert(key, tracks);
+        map.insert(key, RecommendEntry { tracks, profile });
+    }
+
+    pub async fn get_recommend_entry(&self, key: &str) -> Option<RecommendEntry> {
+        let map = self.recommend_results.lock().await;
+        map.get(key).cloned()
     }
 
     pub async fn get_recommend_results(&self, key: &str) -> Option<Vec<TrackMetadata>> {
         let map = self.recommend_results.lock().await;
-        map.get(key).cloned()
+        map.get(key).map(|e| e.tracks.clone())
     }
 
     pub async fn clear(&self, guild_id: GuildId) {

@@ -1005,6 +1005,155 @@ pub async fn handle_history(
         .await;
 }
 
+pub fn build_recommend_view(
+    tracks: &[crate::source::TrackMetadata],
+    profile: &crate::source::TasteProfile,
+    cache_key: &str,
+    page: usize,
+) -> (CreateEmbed, Vec<CreateActionRow>) {
+    const PAGE_SIZE: usize = 10;
+    let total_tracks = tracks.len();
+    let total_pages = ((total_tracks as f64) / (PAGE_SIZE as f64)).ceil() as usize;
+    let total_pages = total_pages.max(1);
+    let current_page = page.min(total_pages.saturating_sub(1));
+
+    let start_idx = current_page * PAGE_SIZE;
+    let end_idx = (start_idx + PAGE_SIZE).min(total_tracks);
+    let page_tracks = &tracks[start_idx..end_idx];
+
+    let mut desc = String::new();
+
+    if current_page == 0 {
+        desc.push_str(&format!(
+            "**{}**\n> {}\n\n**{}**\n",
+            get_lang().recommend_taste_header,
+            profile.summary,
+            get_lang().recommend_songs_header,
+        ));
+    } else {
+        desc.push_str(&format!(
+            "**{} (Page {}/{})**\n\n",
+            get_lang().recommend_songs_header,
+            current_page + 1,
+            total_pages
+        ));
+    }
+
+    let mut select_options = Vec::new();
+
+    for (i, track) in page_tracks.iter().enumerate() {
+        let global_idx = start_idx + i;
+        let source_badge = match track.source.as_str() {
+            "Spotify" => "🟢 `Spotify`",
+            "SoundCloud" => "🟠 `SoundCloud`",
+            _ => "🔴 `YouTube`",
+        };
+
+        let author = track.author.as_deref().unwrap_or("Unknown Artist");
+        let dur = format_duration(track.duration);
+
+        desc.push_str(&format!(
+            "{}. [{}]({}) — **{}** `[{}]` ↳ {}\n",
+            global_idx + 1,
+            truncate(&track.title, 45),
+            track.url,
+            truncate(author, 25),
+            dur,
+            source_badge,
+        ));
+
+        let opt_label = format!("{}. {}", global_idx + 1, truncate(&track.title, 80));
+        let opt_desc = format!("{} • {}", truncate(author, 40), track.source);
+        let opt_val = format!("{}:{}", cache_key, global_idx);
+
+        select_options.push(
+            CreateSelectMenuOption::new(opt_label, opt_val).description(opt_desc),
+        );
+    }
+
+    let (base_footer, embed_color) = match profile.requested_platform {
+        crate::source::PlatformTarget::Spotify => (
+            "🟢 Platform: Spotify (Direct Match 100%)",
+            Color::from_rgb(30, 215, 96),
+        ),
+        crate::source::PlatformTarget::SoundCloud => (
+            "🟠 Platform: SoundCloud (Direct Match 100%)",
+            Color::from_rgb(255, 85, 0),
+        ),
+        crate::source::PlatformTarget::YouTube => (
+            "🔴 Platform: YouTube (Direct Match 100%)",
+            Color::from_rgb(255, 0, 0),
+        ),
+        crate::source::PlatformTarget::Any => (
+            "Rarity Odds: 🔴 YouTube 40% • 🟢 Spotify 30% • 🟠 SoundCloud 30%",
+            Color::from_rgb(255, 120, 0),
+        ),
+    };
+
+    let footer_text = if total_pages > 1 {
+        format!("Page {}/{} • Total {} tracks • {}", current_page + 1, total_pages, total_tracks, base_footer)
+    } else {
+        base_footer.to_string()
+    };
+
+    let embed = CreateEmbed::new()
+        .title(get_lang().recommend_title)
+        .description(desc)
+        .color(embed_color)
+        .footer(serenity::all::CreateEmbedFooter::new(footer_text));
+
+    let max_selectable = (select_options.len() as u8).max(1);
+    let select_menu = CreateSelectMenu::new(
+        "recommend_select",
+        CreateSelectMenuKind::String {
+            options: select_options,
+        },
+    )
+    .min_values(1)
+    .max_values(max_selectable)
+    .placeholder(get_lang().recommend_select_placeholder);
+
+    let row1 = CreateActionRow::SelectMenu(select_menu);
+
+    let mut buttons = Vec::new();
+    if total_pages > 1 {
+        buttons.push(
+            CreateButton::new(format!("recommend_page:{}:{}", cache_key, current_page.saturating_sub(1)))
+                .label("◀️ Prev")
+                .style(ButtonStyle::Primary)
+                .disabled(current_page == 0),
+        );
+        buttons.push(
+            CreateButton::new("recommend_page_info")
+                .label(format!("{}/{}", current_page + 1, total_pages))
+                .style(ButtonStyle::Secondary)
+                .disabled(true),
+        );
+        buttons.push(
+            CreateButton::new(format!("recommend_page:{}:{}", cache_key, current_page + 1))
+                .label("Next ▶️")
+                .style(ButtonStyle::Primary)
+                .disabled(current_page + 1 >= total_pages),
+        );
+    }
+
+    let play_all_label = if total_tracks > 10 {
+        format!("{} ({})", get_lang().recommend_play_all, total_tracks)
+    } else {
+        get_lang().recommend_play_all.to_string()
+    };
+
+    buttons.push(
+        CreateButton::new(format!("recommend_all:{}", cache_key))
+            .label(play_all_label)
+            .style(ButtonStyle::Success),
+    );
+
+    let row2 = CreateActionRow::Buttons(buttons);
+
+    (embed, vec![row1, row2])
+}
+
 pub async fn handle_recommend(
     ctx: &Context,
     command: &CommandInteraction,
@@ -1021,7 +1170,17 @@ pub async fn handle_recommend(
 
     let _ = command.defer(&ctx.http).await;
 
-    let mood = command
+    let explicit_count = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "count")
+        .and_then(|opt| match &opt.value {
+            CommandDataOptionValue::Integer(i) => Some(*i as usize),
+            _ => None,
+        });
+
+    let mood_raw = command
         .data
         .options
         .iter()
@@ -1032,8 +1191,17 @@ pub async fn handle_recommend(
         })
         .filter(|s| !s.is_empty());
 
+    let (_, natural_count, _) = mood_raw
+        .map(crate::source::SourceManager::parse_platform_intent_and_count)
+        .unwrap_or((crate::source::PlatformTarget::Any, None, String::new()));
+
+    let target_count = explicit_count
+        .or(natural_count)
+        .unwrap_or(5)
+        .clamp(1, 100);
+
     let history = queue_mgr.get_history(guild_id).await;
-    let (profile, tracks) = source_mgr.get_recommendations(&history, 5, mood).await;
+    let (mut profile, tracks) = source_mgr.get_recommendations(&history, target_count, mood_raw).await;
 
     if tracks.is_empty() {
         let _ = command
@@ -1045,86 +1213,26 @@ pub async fn handle_recommend(
         return;
     }
 
-    let cache_key = format!("rec_{}_{}", guild_id.get(), command.id.get());
-    queue_mgr.set_recommend_results(cache_key.clone(), tracks.clone()).await;
-
-    let mut desc = format!(
-        "**{}**\n> {}\n\n**{}**\n",
-        get_lang().recommend_taste_header,
-        profile.summary,
-        get_lang().recommend_songs_header,
-    );
-
-    let mut select_options = Vec::new();
-
-    for (i, track) in tracks.iter().enumerate() {
-        let source_badge = match track.source.as_str() {
-            "Spotify" => "🟢 `Spotify • Rare 30%`",
-            "SoundCloud" => "🟠 `SoundCloud • Epic 30%`",
-            _ => "🔴 `YouTube • Common 40%`",
-        };
-
-        let author = track.author.as_deref().unwrap_or("Unknown Artist");
-        let dur = format_duration(track.duration);
-
-        desc.push_str(&format!(
-            "{}. [{}]({}) — **{}** `[{}]`\n   ↳ {}\n",
-            i + 1,
-            truncate(&track.title, 45),
-            track.url,
-            author,
-            dur,
-            source_badge,
-        ));
-
-        let opt_label = format!("{}. {}", i + 1, truncate(&track.title, 80));
-        let opt_desc = format!("{} • {}", truncate(author, 40), track.source);
-        let opt_val = format!("{}:{}", cache_key, i);
-
-        select_options.push(
-            CreateSelectMenuOption::new(opt_label, opt_val).description(opt_desc),
-        );
-    }
-
     if source_mgr.ai().is_enabled() {
         if let Some(first) = tracks.first() {
             let author = first.author.as_deref().unwrap_or("");
             if let Ok(t) = source_mgr.ai().get_trivia(&first.title, author).await {
-                desc.push_str(&format!("\n> {}\n", t));
+                profile.summary.push_str(&format!("\n\n> {}", t));
             }
         }
     }
 
-    let embed = CreateEmbed::new()
-        .title(get_lang().recommend_title)
-        .description(desc)
-        .color(Color::from_rgb(255, 120, 0))
-        .footer(serenity::all::CreateEmbedFooter::new(
-            "Rarity Odds: 🔴 YouTube 40% • 🟢 Spotify 30% • 🟠 SoundCloud 30%",
-        ));
+    let cache_key = format!("rec_{}_{}", guild_id.get(), command.id.get());
+    queue_mgr.set_recommend_results(cache_key.clone(), tracks.clone(), profile.clone()).await;
 
-    let select_menu = CreateSelectMenu::new(
-        "recommend_select",
-        CreateSelectMenuKind::String {
-            options: select_options,
-        },
-    )
-    .placeholder(get_lang().recommend_select_placeholder);
-
-    let row1 = CreateActionRow::SelectMenu(select_menu);
-
-    let play_all_btn = CreateButton::new(format!("recommend_all:{}", cache_key))
-        .label(get_lang().recommend_play_all)
-        .style(ButtonStyle::Success);
-
-    let row2 = CreateActionRow::Buttons(vec![play_all_btn]);
+    let (embed, components) = build_recommend_view(&tracks, &profile, &cache_key, 0);
 
     let _ = command
         .create_followup(
             &ctx.http,
             CreateInteractionResponseFollowup::new()
                 .embed(embed)
-                .components(vec![row1, row2]),
+                .components(components),
         )
         .await;
 }

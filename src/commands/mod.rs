@@ -250,8 +250,18 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 CreateCommandOption::new(
                     CommandOptionType::String,
                     "mood",
-                    "Custom vibe or mood prompt (e.g. rainy night, cyberpunk, anime ost)",
+                    "Custom vibe, mood, or platform (e.g. '100 lagu yui dari spotify', 'cyberpunk', 'lo-fi')",
                 )
+                .required(false),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Integer,
+                    "count",
+                    "Number of recommendations to generate (1 - 100, default: 5)",
+                )
+                .min_int_value(1)
+                .max_int_value(100)
                 .required(false),
             ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
@@ -319,6 +329,8 @@ pub async fn handle_component(
         handle_recommend_select(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id.starts_with("recommend_all:") {
         handle_recommend_all(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id.starts_with("recommend_page:") {
+        handle_recommend_page(ctx, component, queue_mgr).await;
     }
 }
 
@@ -478,7 +490,6 @@ async fn handle_recommend_select(
     use songbird::events::{Event, TrackEvent};
     use crate::commands::events::TrackEndHandler;
     use crate::queue::LoopMode;
-    use crate::utils::embed::build_now_playing_embed;
     use crate::utils::voice::check_voice_channel;
 
     let guild_id = match component.guild_id {
@@ -503,16 +514,29 @@ async fn handle_recommend_select(
         }
     };
 
-    let (cache_key, idx) = match &component.data.kind {
+    let (cache_key, indices) = match &component.data.kind {
         ComponentInteractionDataKind::StringSelect { values } => {
-            let val = values.first().map(|s| s.as_str()).unwrap_or("");
-            let mut parts = val.splitn(2, ':');
-            let key = parts.next().unwrap_or("").to_string();
-            let i = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-            (key, i)
+            let mut key = String::new();
+            let mut idxs = Vec::new();
+            for val in values {
+                let mut parts = val.splitn(2, ':');
+                if let (Some(k), Some(i_str)) = (parts.next(), parts.next()) {
+                    if key.is_empty() {
+                        key = k.to_string();
+                    }
+                    if let Ok(i) = i_str.parse::<usize>() {
+                        idxs.push(i);
+                    }
+                }
+            }
+            (key, idxs)
         }
         _ => return,
     };
+
+    if indices.is_empty() {
+        return;
+    }
 
     let tracks = match queue_mgr.get_recommend_results(&cache_key).await {
         Some(t) => t,
@@ -531,10 +555,19 @@ async fn handle_recommend_select(
         }
     };
 
-    let mut track = match tracks.get(idx) {
-        Some(t) => t.clone(),
-        None => return,
-    };
+    let mut selected_tracks = Vec::new();
+    let user_tag = format!("<@{}>", component.user.id);
+    for idx in indices {
+        if let Some(t) = tracks.get(idx) {
+            let mut track = t.clone();
+            track.requester = Some(user_tag.clone());
+            selected_tracks.push(track);
+        }
+    }
+
+    if selected_tracks.is_empty() {
+        return;
+    }
 
     let _ = component.defer(&ctx.http).await;
 
@@ -561,20 +594,22 @@ async fn handle_recommend_select(
     let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
     let is_currently_playing = handler.queue().current().is_some();
 
-    track.requester = Some(format!("<@{}>", component.user.id));
-    queue_mgr.push_track(guild_id, track.clone()).await;
+    for track in &selected_tracks {
+        queue_mgr.push_track(guild_id, track.clone()).await;
+    }
     queue_mgr.set_text_channel(guild_id, component.channel_id).await;
 
     if !is_currently_playing {
+        let first = selected_tracks[0].clone();
         let filter = queue_mgr.get_filter(guild_id).await;
         let input = source_mgr
-            .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+            .create_input_filtered(&first.stream_url, None, filter.ffmpeg_filter())
             .await;
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
 
-        queue_mgr.set_current_track(guild_id, track.clone()).await;
-        queue_mgr.push_history(guild_id, track.clone()).await;
+        queue_mgr.set_current_track(guild_id, first.clone()).await;
+        queue_mgr.push_history(guild_id, first.clone()).await;
 
         if loop_mode == LoopMode::Track {
             let _ = track_handle.enable_loop();
@@ -592,32 +627,20 @@ async fn handle_recommend_select(
         );
     }
 
-    if is_currently_playing {
-        let title = track.title.clone();
-        let msg = fmt(get_lang().recommend_enqueued_one, &[&title]);
-        let _ = component
-            .create_followup(
-                &ctx.http,
-                CreateInteractionResponseFollowup::new().content(msg),
-            )
-            .await;
+    let confirm_msg = if selected_tracks.len() == 1 {
+        fmt(get_lang().recommend_enqueued_one, &[&selected_tracks[0].title])
     } else {
-        let queue_len = queue_mgr.get_queue(guild_id).await.len();
-        let upcoming_count = queue_len.saturating_sub(1);
-        let (embed, action_row) = build_now_playing_embed(&track, upcoming_count, loop_mode, false);
+        fmt(get_lang().recommend_enqueued_all, &[&selected_tracks.len().to_string()])
+    };
 
-        if let Ok(msg) = component
-            .create_followup(
-                &ctx.http,
-                CreateInteractionResponseFollowup::new()
-                    .embed(embed)
-                    .components(vec![action_row]),
-            )
-            .await
-        {
-            queue_mgr.set_last_message_id(guild_id, msg.id).await;
-        }
-    }
+    let _ = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .content(confirm_msg)
+                .ephemeral(true),
+        )
+        .await;
 }
 
 async fn handle_recommend_all(
@@ -747,6 +770,55 @@ async fn handle_recommend_all(
         .create_followup(
             &ctx.http,
             CreateInteractionResponseFollowup::new().content(msg),
+        )
+        .await;
+}
+
+async fn handle_recommend_page(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let custom_id = component.data.custom_id.as_str();
+    let parts: Vec<&str> = custom_id.split(':').collect();
+    if parts.len() < 3 {
+        return;
+    }
+    let cache_key = parts[1];
+    let page = parts[2].parse::<usize>().unwrap_or(0);
+
+    let entry = match queue_mgr.get_recommend_entry(cache_key).await {
+        Some(e) => e,
+        None => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let (embed, components) = crate::commands::control::build_recommend_view(
+        &entry.tracks,
+        &entry.profile,
+        cache_key,
+        page,
+    );
+
+    let _ = component
+        .create_response(
+            &ctx.http,
+            serenity::all::CreateInteractionResponse::UpdateMessage(
+                serenity::all::CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .components(components),
+            ),
         )
         .await;
 }

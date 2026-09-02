@@ -73,11 +73,22 @@ pub async fn handle_play(
     let requester_tag = format!("<@{}>", command.user.id);
 
     let is_url = query.starts_with("http://") || query.starts_with("https://");
-    let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+    let is_spotify_url = query.contains("open.spotify.com")
+        || query.starts_with("spotify:track")
+        || query.starts_with("spotify:album")
+        || query.starts_with("spotify:playlist");
 
     // Text query → show search results dropdown for user selection
-    if !is_url && !is_spotify {
-        let results = match source_mgr.search(&query).await {
+    if !is_url && !is_spotify_url {
+        let (platform_target, clean_query) = SourceManager::parse_platform_intent(&query);
+
+        let search_res = match platform_target {
+            crate::source::PlatformTarget::Spotify => source_mgr.search_spotify(&clean_query, 10).await,
+            crate::source::PlatformTarget::SoundCloud => source_mgr.search_soundcloud(&clean_query, 10).await,
+            crate::source::PlatformTarget::YouTube | crate::source::PlatformTarget::Any => source_mgr.search(&clean_query).await,
+        };
+
+        let results = match search_res {
             Ok(tracks) => tracks,
             Err(e) => {
                 let msg = fmt(get_lang().could_not_find, &[&e]);
@@ -374,11 +385,22 @@ pub async fn handle_playnext(
 
     let requester_tag = format!("<@{}>", command.user.id);
     let is_url = query.starts_with("http://") || query.starts_with("https://");
-    let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+    let is_spotify_url = query.contains("open.spotify.com")
+        || query.starts_with("spotify:track")
+        || query.starts_with("spotify:album")
+        || query.starts_with("spotify:playlist");
 
     // Text query → show search results dropdown (same as /play but flagged as play_next)
-    if !is_url && !is_spotify {
-        let results = match source_mgr.search(&query).await {
+    if !is_url && !is_spotify_url {
+        let (platform_target, clean_query) = SourceManager::parse_platform_intent(&query);
+
+        let search_res = match platform_target {
+            crate::source::PlatformTarget::Spotify => source_mgr.search_spotify(&clean_query, 10).await,
+            crate::source::PlatformTarget::SoundCloud => source_mgr.search_soundcloud(&clean_query, 10).await,
+            crate::source::PlatformTarget::YouTube | crate::source::PlatformTarget::Any => source_mgr.search(&clean_query).await,
+        };
+
+        let results = match search_res {
             Ok(tracks) => tracks,
             Err(e) => {
                 let msg = fmt(get_lang().could_not_find, &[&e]);

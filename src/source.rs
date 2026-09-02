@@ -42,12 +42,21 @@ struct SpotifyTrackInfo {
     duration: Option<Duration>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlatformTarget {
+    Any,
+    Spotify,
+    SoundCloud,
+    YouTube,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TasteProfile {
     pub top_artists: Vec<String>,
     pub dominant_region: String,
     pub top_keywords: Vec<String>,
     pub summary: String,
+    pub requested_platform: PlatformTarget,
 }
 
 pub struct SourceManager {
@@ -879,7 +888,8 @@ impl SourceManager {
                 top_artists: vec![],
                 dominant_region: "Global".to_string(),
                 top_keywords: vec![],
-                summary: "Belum ada riwayat lagu. Merekomendasikan lagu viral global terpopuler!".to_string(),
+                summary: "Empty history".to_string(),
+                requested_platform: PlatformTarget::Any,
             };
         }
 
@@ -983,7 +993,139 @@ impl SourceManager {
             dominant_region,
             top_keywords,
             summary,
+            requested_platform: PlatformTarget::Any,
         }
+    }
+
+    /// Detects if user requested a specific platform (e.g. "dari spotify", "on soundcloud", etc.)
+    /// Returns (PlatformTarget, clean_search_query)
+    pub fn parse_platform_intent(query: &str) -> (PlatformTarget, String) {
+        let q_lower = query.to_lowercase();
+
+        let spotify_patterns = [
+            "tapi dari spotify", "dari spotify", "di spotify", "lewat spotify", "pakai spotify",
+            "from spotify", "on spotify", "via spotify", "spotify:",
+        ];
+        let soundcloud_patterns = [
+            "tapi dari soundcloud", "dari soundcloud", "di soundcloud", "lewat soundcloud",
+            "pakai soundcloud", "from soundcloud", "on soundcloud", "via soundcloud",
+            "soundcloud:", "sc:",
+        ];
+        let youtube_patterns = [
+            "tapi dari youtube", "dari youtube", "di youtube", "lewat youtube", "pakai youtube",
+            "from youtube", "on youtube", "via youtube", "youtube:", "yt:",
+        ];
+
+        let mut target = PlatformTarget::Any;
+        let mut matched_pattern: Option<&str> = None;
+
+        for p in &spotify_patterns {
+            if q_lower.contains(p) {
+                target = PlatformTarget::Spotify;
+                matched_pattern = Some(p);
+                break;
+            }
+        }
+        if target == PlatformTarget::Any {
+            for p in &soundcloud_patterns {
+                if q_lower.contains(p) {
+                    target = PlatformTarget::SoundCloud;
+                    matched_pattern = Some(p);
+                    break;
+                }
+            }
+        }
+        if target == PlatformTarget::Any {
+            for p in &youtube_patterns {
+                if q_lower.contains(p) {
+                    target = PlatformTarget::YouTube;
+                    matched_pattern = Some(p);
+                    break;
+                }
+            }
+        }
+
+        let mut cleaned = query.to_string();
+        if let Some(pat) = matched_pattern {
+            let lower = cleaned.to_lowercase();
+            if let Some(idx) = lower.find(pat) {
+                cleaned.replace_range(idx..idx + pat.len(), " ");
+            }
+        }
+
+        let fillers = [
+            "saya mau lagu", "aku mau lagu", "mau lagu", "putar lagu", "cari lagu",
+            "i want song", "play song", "search song", "play",
+        ];
+        for f in &fillers {
+            let lower = cleaned.trim().to_lowercase();
+            if lower.starts_with(f) {
+                let trimmed = cleaned.trim();
+                cleaned = trimmed[f.len()..].trim().to_string();
+                break;
+            }
+        }
+
+        let mut final_query = cleaned
+            .trim()
+            .trim_matches(|c: char| c == ':' || c == '-' || c == ',' || c == '"' || c == '\'')
+            .trim()
+            .to_string();
+
+        if final_query.is_empty() {
+            final_query = query.trim().to_string();
+        }
+
+        (target, final_query)
+    }
+
+    /// Detects platform intent AND extracts desired count (e.g. "100 rekomendasi lagu yui tapi dari spotify")
+    /// Returns (PlatformTarget, Option<usize>, clean_query)
+    pub fn parse_platform_intent_and_count(query: &str) -> (PlatformTarget, Option<usize>, String) {
+        let (target, cleaned) = Self::parse_platform_intent(query);
+
+        let mut requested_count = None;
+        let words: Vec<&str> = cleaned.split_whitespace().collect();
+        let mut remaining = Vec::new();
+
+        let count_indicators = [
+            "rekomendasi", "lagu", "songs", "song", "tracks", "track", "buah", "biji", "items", "item",
+        ];
+
+        for (i, w) in words.iter().enumerate() {
+            let digits_only: String = w.chars().filter(|c| c.is_ascii_digit()).collect();
+            if !digits_only.is_empty() && digits_only.len() == w.len() {
+                if let Ok(num) = digits_only.parse::<usize>() {
+                    if num > 0 && num <= 100 && requested_count.is_none() {
+                        let prev = if i > 0 { words[i - 1].to_lowercase() } else { String::new() };
+                        let next = if i + 1 < words.len() { words[i + 1].to_lowercase() } else { String::new() };
+                        let is_count_phrase = count_indicators.contains(&next.as_str())
+                            || count_indicators.contains(&prev.as_str())
+                            || i == 0;
+                        if is_count_phrase {
+                            requested_count = Some(num);
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            let w_lower = w.to_lowercase();
+            if requested_count.is_some() && count_indicators.contains(&w_lower.as_str()) && remaining.is_empty() {
+                continue;
+            }
+
+            if w_lower == "berikan" || w_lower == "kasih" || w_lower == "give" || w_lower == "me" || w_lower == "saya" {
+                continue;
+            }
+
+            remaining.push(*w);
+        }
+
+        let final_query = remaining.join(" ").trim().to_string();
+        let final_query = if final_query.is_empty() { cleaned } else { final_query };
+
+        (target, requested_count, final_query)
     }
 
     /// Generates music recommendations based on server playback history or custom mood
@@ -1000,18 +1142,25 @@ impl SourceManager {
         let mut profile = Self::analyze_taste(history);
         let mut seeds = Vec::new();
 
+        // Detect platform target if specified in mood
+        let (platform_target, _, clean_mood) = mood
+            .map(Self::parse_platform_intent_and_count)
+            .unwrap_or((PlatformTarget::Any, None, String::new()));
+        profile.requested_platform = platform_target;
+
         // 1. If custom mood is provided, try AI mood curation first
-        if let Some(m) = mood.filter(|s| !s.trim().is_empty()) {
+        if let Some(_) = mood.filter(|s| !s.trim().is_empty()) {
+            let effective_mood = if clean_mood.is_empty() { mood.unwrap() } else { &clean_mood };
             if self.ai_client.is_enabled() {
-                if let Ok(curation) = self.ai_client.curate_mood(m, history).await {
-                    profile.summary = format!("🎭 **Mood: \"{}\"**\n{}", m, curation.commentary);
+                if let Ok(curation) = self.ai_client.curate_mood(effective_mood, history).await {
+                    profile.summary = format!("🎭 **Mood: \"{}\"**\n{}", effective_mood, curation.commentary);
                     seeds = curation.query_seeds;
                 }
             }
             if seeds.is_empty() {
-                seeds.push(format!("{} songs", m.trim()));
-                seeds.push(format!("{} music", m.trim()));
-                profile.summary = format!("🎭 **Mood:** \"{}\"", m.trim());
+                seeds.push(format!("{} songs", effective_mood.trim()));
+                seeds.push(format!("{} music", effective_mood.trim()));
+                profile.summary = format!("🎭 **Mood:** \"{}\"", effective_mood.trim());
             }
         } else {
             // 2. No custom mood -> Use AI DJ taste commentary if enabled
@@ -1051,6 +1200,16 @@ impl SourceManager {
             seeds.push("Popular songs".to_string());
         }
 
+        // Expand seeds if high target count requested (e.g. 50-100 tracks)
+        if target_count > 10 {
+            let base_seeds = seeds.clone();
+            for s in &base_seeds {
+                seeds.push(format!("{} greatest hits", s));
+                seeds.push(format!("{} top tracks", s));
+                seeds.push(format!("{} album mix", s));
+            }
+        }
+
         let is_dup = |cand: &TrackMetadata, existing_batch: &[TrackMetadata]| -> bool {
             let cand_yt_id = Self::extract_youtube_id(&cand.url)
                 .or_else(|| Self::extract_youtube_id(&cand.stream_url));
@@ -1086,7 +1245,8 @@ impl SourceManager {
         };
 
         let mut results = Vec::new();
-        let max_loops = target_count * 4;
+        let max_loops = (target_count / 5 + 10) * 4;
+        let query_limit = if target_count > 10 { 15 } else { 5 };
         let mut loop_count = 0;
 
         while results.len() < target_count && loop_count < max_loops {
@@ -1094,27 +1254,46 @@ impl SourceManager {
             let seed_idx = (rand::random::<usize>()) % seeds.len();
             let seed = &seeds[seed_idx];
 
-            // Roll weighted rarity (1..=100)
-            // 1..=40: YouTube (40%)
-            // 41..=70: Spotify (30%)
-            // 71..=100: SoundCloud (30%)
-            let roll = (rand::random::<u32>() % 100) + 1;
+            let candidate_list = match platform_target {
+                PlatformTarget::Spotify => {
+                    match self.search_spotify(seed, query_limit).await {
+                        Ok(list) if !list.is_empty() => list,
+                        _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                    }
+                }
+                PlatformTarget::SoundCloud => {
+                    match self.search_soundcloud(seed, query_limit).await {
+                        Ok(list) if !list.is_empty() => list,
+                        _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                    }
+                }
+                PlatformTarget::YouTube => {
+                    self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default()
+                }
+                PlatformTarget::Any => {
+                    // Roll weighted rarity (1..=100)
+                    // 1..=40: YouTube (40%)
+                    // 41..=70: Spotify (30%)
+                    // 71..=100: SoundCloud (30%)
+                    let roll = (rand::random::<u32>() % 100) + 1;
 
-            let candidate_list = if (41..=70).contains(&roll) {
-                // Spotify
-                match self.search_spotify(seed, 5).await {
-                    Ok(list) if !list.is_empty() => list,
-                    _ => self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default(),
+                    if (41..=70).contains(&roll) {
+                        // Spotify
+                        match self.search_spotify(seed, query_limit).await {
+                            Ok(list) if !list.is_empty() => list,
+                            _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                        }
+                    } else if roll > 70 {
+                        // SoundCloud
+                        match self.search_soundcloud(seed, query_limit).await {
+                            Ok(list) if !list.is_empty() => list,
+                            _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                        }
+                    } else {
+                        // YouTube
+                        self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default()
+                    }
                 }
-            } else if roll > 70 {
-                // SoundCloud
-                match self.search_soundcloud(seed, 5).await {
-                    Ok(list) if !list.is_empty() => list,
-                    _ => self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default(),
-                }
-            } else {
-                // YouTube
-                self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default()
             };
 
             for cand in candidate_list {

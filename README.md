@@ -75,7 +75,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/playlist show <name>` | Inspect tracks inside a saved personal playlist | `/playlist show name:My Favorites` |
 | `/playlist delete <name>` | Delete a saved personal playlist | `/playlist delete name:My Favorites` |
 | `/history [clear]` | View server playback history log (used by Autoplay) or clear it | `/history` or `/history clear:true` |
-| `/recommend [mood]` | AI Radio DJ recommendations based on server taste or custom mood (40% YT, 30% Spotify, 30% SoundCloud) | `/recommend` or `/recommend mood:rainy evening lo-fi` |
+| `/recommend [mood] [count]` | AI recommendations up to 100 songs with pagination buttons & direct platform search (e.g. "100 lagu yui dari spotify") | `/recommend mood:100 lagu yui dari spotify` or `/recommend count:100` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/ping` | Show bot latency | `/ping` |
