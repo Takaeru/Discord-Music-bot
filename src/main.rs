@@ -49,7 +49,7 @@ async fn main() {
         playlist_store,
     };
 
-    let songbird_config = songbird::Config::default().preallocated_tracks(4);
+    let songbird_config = songbird::Config::default().preallocated_tracks(1);
     let songbird_voice = songbird::Songbird::serenity_from_config(songbird_config);
 
     let mut client = Client::builder(&token, intents)

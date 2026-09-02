@@ -57,7 +57,13 @@ impl PlaylistStore {
         if let Some(uri) = mongo_uri {
             info!("Attempting to connect to MongoDB Atlas...");
             match ClientOptions::parse(&uri).await {
-                Ok(client_options) => {
+                Ok(mut client_options) => {
+                    // Resource optimization: cap connection pool for lightweight bot
+                    client_options.max_pool_size = Some(3);
+                    client_options.min_pool_size = Some(0);
+                    client_options.server_selection_timeout = Some(std::time::Duration::from_secs(5));
+                    client_options.connect_timeout = Some(std::time::Duration::from_secs(10));
+
                     match Client::with_options(client_options) {
                         Ok(client) => {
                             let ping_doc = doc! { "ping": 1 };

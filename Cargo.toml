@@ -22,3 +22,10 @@ percent-encoding = "2.3"
 
 [features]
 vendored-openssl = ["openssl/vendored"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

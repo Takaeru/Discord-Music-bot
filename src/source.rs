@@ -53,19 +53,19 @@ impl SourceManager {
             http_client: reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .tcp_keepalive(Some(Duration::from_secs(30)))
-                .pool_idle_timeout(Some(Duration::from_secs(120)))
-                .pool_max_idle_per_host(20)
-                .timeout(Duration::from_secs(60))
-                .connect_timeout(Duration::from_secs(15))
+                .pool_idle_timeout(Some(Duration::from_secs(30)))
+                .pool_max_idle_per_host(3)
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
             query_cache: Cache::builder()
-                .max_capacity(500)
-                .time_to_live(Duration::from_secs(12 * 3600))
+                .max_capacity(100)
+                .time_to_live(Duration::from_secs(4 * 3600))
                 .build(),
             stream_cache: Cache::builder()
-                .max_capacity(300)
-                .time_to_live(Duration::from_secs(3 * 3600))
+                .max_capacity(50)
+                .time_to_live(Duration::from_secs(2 * 3600))
                 .build(),
         }
     }

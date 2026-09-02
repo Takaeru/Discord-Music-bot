@@ -10,3 +10,5 @@ cover.out
 .vscode/
 .idea/
 tmp/
+target/
+data/

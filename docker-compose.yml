@@ -1,5 +1,6 @@
 services:
   discord-bot:
+    build: .
     image: ghcr.io/takaeru/discord-music-bot:latest
     container_name: discord-music-bot
     restart: unless-stopped
@@ -11,6 +12,14 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - BOT_LANG=${BOT_LANG:-en}
       - NOW_PLAYING_BEHAVIOR=${NOW_PLAYING_BEHAVIOR:-old}
+      - MONGO_USER=${MONGO_USER:-}
+      - MONGO_PASSWORD=${MONGO_PASSWORD:-}
+      - MONGO_HOST=${MONGO_HOST:-}
+      - MONGO_APP_NAME=${MONGO_APP_NAME:-}
+      - MONGO_DATABASE=${MONGO_DATABASE:-}
+      - MONGODB_URI=${MONGODB_URI:-}
+    volumes:
+      - ./data:/app/data
     deploy:
       resources:
         limits:
