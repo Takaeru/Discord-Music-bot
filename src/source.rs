@@ -321,17 +321,24 @@ impl SourceManager {
         info!("Resolving query via yt-dlp: {}", search_target);
 
         let max_items = Self::get_max_playlist_limit();
+        let ytdlp_bin = std::env::var("YTDLP_PATH").unwrap_or_else(|_| "yt-dlp".to_string());
 
         let target_for_cmd = search_target.clone();
         let output = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(45),
             tokio::task::spawn_blocking(move || {
-                let mut cmd = Command::new("yt-dlp");
+                let mut cmd = Command::new(&ytdlp_bin);
                 cmd.args([
                     "-J",
                     "--default-search",
                     "ytsearch",
                     "--no-warnings",
+                    "--socket-timeout",
+                    "10",
+                    "--retries",
+                    "2",
+                    "--extractor-args",
+                    "youtube:player_client=android,web",
                 ]);
 
                 if has_playlist {
@@ -350,7 +357,7 @@ impl SourceManager {
             }),
         )
         .await
-        .map_err(|_| "yt-dlp timed out after 30 seconds".to_string())?
+        .map_err(|_| "yt-dlp timed out after 45 seconds".to_string())?
         .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
@@ -444,8 +451,9 @@ impl SourceManager {
         }
 
         let target = url.to_string();
+        let ytdlp_bin = std::env::var("YTDLP_PATH").unwrap_or_else(|_| "yt-dlp".to_string());
         let task = tokio::task::spawn_blocking(move || {
-            let output = Command::new("yt-dlp")
+            let output = Command::new(&ytdlp_bin)
                 .args([
                     "-g",
                     "--format-sort",
@@ -453,12 +461,14 @@ impl SourceManager {
                     "-f",
                     "ba[acodec=opus][abr<=128]/ba[ext=webm][abr<=128]/ba[acodec=opus]/ba[ext=webm]/http_mp3_128/ba[ext=mp3]/ba[acodec!=aac]/ba/b",
                     "--socket-timeout",
-                    "15",
+                    "10",
                     "--retries",
-                    "3",
+                    "2",
                     "--fragment-retries",
-                    "3",
+                    "2",
                     "--no-warnings",
+                    "--extractor-args",
+                    "youtube:player_client=android,web",
                     &target,
                 ])
                 .output()
