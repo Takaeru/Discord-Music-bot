@@ -11,7 +11,7 @@ use serenity::all::{
 };
 use std::sync::Arc;
 
-use crate::lang::get_lang;
+use crate::lang::{fmt, get_lang};
 use crate::playlist::PlaylistStore;
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
@@ -19,9 +19,9 @@ use crate::utils::response::send_response;
 
 use self::control::{
     handle_autoplay, handle_clear, handle_filter, handle_help, handle_history, handle_jump,
-    handle_leave, handle_music_component, handle_pause, handle_ping, handle_remove, handle_repeat,
-    handle_replay, handle_resume, handle_seek, handle_shuffle, handle_skip, handle_stop,
-    handle_volume,
+    handle_leave, handle_music_component, handle_pause, handle_ping, handle_recommend, handle_remove,
+    handle_repeat, handle_replay, handle_resume, handle_seek, handle_shuffle, handle_skip,
+    handle_stop, handle_volume,
 };
 use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
@@ -244,6 +244,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 )
                 .required(false),
             ),
+        CreateCommand::new("recommend")
+            .description(get_lang().cmd_recommend)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "mood",
+                    "Custom vibe or mood prompt (e.g. rainy night, cyberpunk, anime ost)",
+                )
+                .required(false),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -281,6 +291,7 @@ pub async fn handle_command(
         "autoplay" => handle_autoplay(ctx, command, queue_mgr).await,
         "playlist" => handle_playlist(ctx, command, source_mgr, queue_mgr, playlist_store).await,
         "history" => handle_history(ctx, command, queue_mgr).await,
+        "recommend" => handle_recommend(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
@@ -304,6 +315,10 @@ pub async fn handle_component(
         handle_music_component(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id == "search_play" {
         handle_search_play(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id == "recommend_select" {
+        handle_recommend_select(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id.starts_with("recommend_all:") {
+        handle_recommend_all(ctx, component, source_mgr, queue_mgr).await;
     }
 }
 
@@ -451,4 +466,287 @@ async fn handle_search_play(
     {
         queue_mgr.set_last_message_id(guild_id, msg.id).await;
     }
+}
+
+async fn handle_recommend_select(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    use serenity::all::{ComponentInteractionDataKind, CreateInteractionResponseFollowup};
+    use songbird::events::{Event, TrackEvent};
+    use crate::commands::events::TrackEndHandler;
+    use crate::queue::LoopMode;
+    use crate::utils::embed::build_now_playing_embed;
+    use crate::utils::voice::check_voice_channel;
+
+    let guild_id = match component.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    let connect_to = match check_voice_channel(ctx, guild_id, component.user.id) {
+        Ok(c) => c,
+        Err(msg) => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(msg)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let (cache_key, idx) = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            let val = values.first().map(|s| s.as_str()).unwrap_or("");
+            let mut parts = val.splitn(2, ':');
+            let key = parts.next().unwrap_or("").to_string();
+            let i = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+            (key, i)
+        }
+        _ => return,
+    };
+
+    let tracks = match queue_mgr.get_recommend_results(&cache_key).await {
+        Some(t) => t,
+        None => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let mut track = match tracks.get(idx) {
+        Some(t) => t.clone(),
+        None => return,
+    };
+
+    let _ = component.defer(&ctx.http).await;
+
+    let manager = songbird::get(ctx).await.unwrap();
+    let call_lock = match manager.get(guild_id) {
+        Some(lock) => lock,
+        None => match manager.join(guild_id, connect_to).await {
+            Ok(lock) => lock,
+            Err(e) => {
+                let err_str = format!("{:?}", e);
+                let err_msg = fmt(get_lang().failed_connect_voice, &[&err_str]);
+                let _ = component
+                    .create_followup(
+                        &ctx.http,
+                        CreateInteractionResponseFollowup::new().content(err_msg),
+                    )
+                    .await;
+                return;
+            }
+        },
+    };
+
+    let mut handler = call_lock.lock().await;
+    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+    let is_currently_playing = handler.queue().current().is_some();
+
+    track.requester = Some(format!("<@{}>", component.user.id));
+    queue_mgr.push_track(guild_id, track.clone()).await;
+    queue_mgr.set_text_channel(guild_id, component.channel_id).await;
+
+    if !is_currently_playing {
+        let filter = queue_mgr.get_filter(guild_id).await;
+        let input = source_mgr
+            .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+            .await;
+        let track_handle = handler.enqueue_input(input).await;
+        let _ = track_handle.set_volume(0.8);
+
+        queue_mgr.set_current_track(guild_id, track.clone()).await;
+        queue_mgr.push_history(guild_id, track.clone()).await;
+
+        if loop_mode == LoopMode::Track {
+            let _ = track_handle.enable_loop();
+        }
+
+        let _ = track_handle.add_event(
+            Event::Track(TrackEvent::End),
+            TrackEndHandler {
+                guild_id,
+                queue_mgr: queue_mgr.clone(),
+                source_mgr: source_mgr.clone(),
+                call_lock: call_lock.clone(),
+                http: ctx.http.clone(),
+            },
+        );
+    }
+
+    if is_currently_playing {
+        let title = track.title.clone();
+        let msg = fmt(get_lang().recommend_enqueued_one, &[&title]);
+        let _ = component
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new().content(msg),
+            )
+            .await;
+    } else {
+        let queue_len = queue_mgr.get_queue(guild_id).await.len();
+        let upcoming_count = queue_len.saturating_sub(1);
+        let (embed, action_row) = build_now_playing_embed(&track, upcoming_count, loop_mode, false);
+
+        if let Ok(msg) = component
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
+            )
+            .await
+        {
+            queue_mgr.set_last_message_id(guild_id, msg.id).await;
+        }
+    }
+}
+
+async fn handle_recommend_all(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    use serenity::all::CreateInteractionResponseFollowup;
+    use songbird::events::{Event, TrackEvent};
+    use crate::commands::events::TrackEndHandler;
+    use crate::queue::LoopMode;
+    use crate::utils::voice::check_voice_channel;
+
+    let guild_id = match component.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    let connect_to = match check_voice_channel(ctx, guild_id, component.user.id) {
+        Ok(c) => c,
+        Err(msg) => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(msg)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let cache_key = component
+        .data
+        .custom_id
+        .strip_prefix("recommend_all:")
+        .unwrap_or("");
+
+    let tracks = match queue_mgr.get_recommend_results(cache_key).await {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponse::Message(
+                        serenity::all::CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let _ = component.defer(&ctx.http).await;
+
+    let manager = songbird::get(ctx).await.unwrap();
+    let call_lock = match manager.get(guild_id) {
+        Some(lock) => lock,
+        None => match manager.join(guild_id, connect_to).await {
+            Ok(lock) => lock,
+            Err(e) => {
+                let err_str = format!("{:?}", e);
+                let err_msg = fmt(get_lang().failed_connect_voice, &[&err_str]);
+                let _ = component
+                    .create_followup(
+                        &ctx.http,
+                        CreateInteractionResponseFollowup::new().content(err_msg),
+                    )
+                    .await;
+                return;
+            }
+        },
+    };
+
+    let mut handler = call_lock.lock().await;
+    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+    let is_currently_playing = handler.queue().current().is_some();
+
+    let user_tag = format!("<@{}>", component.user.id);
+    let mut stamped_tracks = Vec::new();
+    for mut t in tracks {
+        t.requester = Some(user_tag.clone());
+        stamped_tracks.push(t);
+    }
+
+    let first_track = stamped_tracks[0].clone();
+    let count_str = stamped_tracks.len().to_string();
+
+    queue_mgr.push_playlist(guild_id, stamped_tracks).await;
+    queue_mgr.set_text_channel(guild_id, component.channel_id).await;
+
+    if !is_currently_playing {
+        let filter = queue_mgr.get_filter(guild_id).await;
+        let input = source_mgr
+            .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
+            .await;
+        let track_handle = handler.enqueue_input(input).await;
+        let _ = track_handle.set_volume(0.8);
+
+        queue_mgr.set_current_track(guild_id, first_track.clone()).await;
+        queue_mgr.push_history(guild_id, first_track.clone()).await;
+
+        if loop_mode == LoopMode::Track {
+            let _ = track_handle.enable_loop();
+        }
+
+        let _ = track_handle.add_event(
+            Event::Track(TrackEvent::End),
+            TrackEndHandler {
+                guild_id,
+                queue_mgr: queue_mgr.clone(),
+                source_mgr: source_mgr.clone(),
+                call_lock: call_lock.clone(),
+                http: ctx.http.clone(),
+            },
+        );
+    }
+
+    let msg = fmt(get_lang().recommend_enqueued_all, &[&count_str]);
+    let _ = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new().content(msg),
+        )
+        .await;
 }

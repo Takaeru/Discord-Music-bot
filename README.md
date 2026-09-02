@@ -75,6 +75,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/playlist show <name>` | Inspect tracks inside a saved personal playlist | `/playlist show name:My Favorites` |
 | `/playlist delete <name>` | Delete a saved personal playlist | `/playlist delete name:My Favorites` |
 | `/history [clear]` | View server playback history log (used by Autoplay) or clear it | `/history` or `/history clear:true` |
+| `/recommend [mood]` | AI Radio DJ recommendations based on server taste or custom mood (40% YT, 30% Spotify, 30% SoundCloud) | `/recommend` or `/recommend mood:rainy evening lo-fi` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/ping` | Show bot latency | `/ping` |
@@ -106,6 +107,12 @@ BOT_LANG=en
 
 # Now Playing behavior: old (default, history) or new (clean channel)
 NOW_PLAYING_BEHAVIOR=new
+
+# Universal Multi-Provider AI DJ (Gemini, Claude, OpenAI, Grok, Qwen, Ollama, etc.)
+LLM_PROVIDER=gemini
+LLM_API_KEY=your_api_key_here
+LLM_MODEL=gemini-1.5-flash
+# LLM_BASE_URL=https://api.groq.com/openai/v1
 
 # Max items to load from YouTube playlists, mixes (list=RD), radio, or Spotify (0 = unlimited)
 MAX_PLAYLIST_ITEMS=50
@@ -164,7 +171,8 @@ discord-bot/
     ├── main.rs            # Bot entrypoint, tracing & Gateway connection
     ├── handler.rs         # Serenity interaction handler & Slash command registration
     ├── queue.rs           # Guild queue state & LoopMode manager
-    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Embed API)
+    ├── source.rs          # Metadata extraction (yt-dlp, Spotify Guest API, SoundCloud)
+    ├── ai.rs              # Universal Multi-Provider AI DJ client (Gemini, Claude, Grok, Qwen, Ollama)
     ├── lang.rs            # Bilingual string tables (EN / ID) — all user-facing text
     ├── commands/          # Modular slash command handlers
     │   ├── mod.rs         # Command router & registration

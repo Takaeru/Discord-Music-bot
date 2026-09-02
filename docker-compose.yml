@@ -19,6 +19,10 @@ services:
       - MONGO_APP_NAME=${MONGO_APP_NAME:-}
       - MONGO_DATABASE=${MONGO_DATABASE:-}
       - MONGODB_URI=${MONGODB_URI:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
     volumes:
       - ./data:/app/data
     deploy:

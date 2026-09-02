@@ -1,6 +1,8 @@
 use serenity::all::{
-    Color, CommandDataOptionValue, CommandInteraction, ComponentInteraction, Context, CreateEmbed,
-    CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    ButtonStyle, Color, CommandDataOptionValue, CommandInteraction, ComponentInteraction, Context,
+    CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse,
+    CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption,
 };
 use std::sync::Arc;
 use tracing::error;
@@ -748,6 +750,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("📝 `/lyrics [query]`", get_lang().help_lyrics, true)
         .field("📑 `/playlist <cmd>`", get_lang().help_playlist, true)
         .field("📜 `/history [clear]`", get_lang().help_history, true)
+        .field("✨ `/recommend`", get_lang().cmd_recommend, true)
         .field("🏓 `/ping`", get_lang().help_ping, true)
         .color(Color::from_rgb(88, 101, 242));
 
@@ -998,6 +1001,130 @@ pub async fn handle_history(
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new().embed(embed),
             ),
+        )
+        .await;
+}
+
+pub async fn handle_recommend(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => {
+            let _ = send_response(ctx, command, get_lang().server_only, true).await;
+            return;
+        }
+    };
+
+    let _ = command.defer(&ctx.http).await;
+
+    let mood = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "mood")
+        .and_then(|opt| match &opt.value {
+            CommandDataOptionValue::String(s) => Some(s.as_str().trim()),
+            _ => None,
+        })
+        .filter(|s| !s.is_empty());
+
+    let history = queue_mgr.get_history(guild_id).await;
+    let (profile, tracks) = source_mgr.get_recommendations(&history, 5, mood).await;
+
+    if tracks.is_empty() {
+        let _ = command
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new().content(get_lang().recommend_empty),
+            )
+            .await;
+        return;
+    }
+
+    let cache_key = format!("rec_{}_{}", guild_id.get(), command.id.get());
+    queue_mgr.set_recommend_results(cache_key.clone(), tracks.clone()).await;
+
+    let mut desc = format!(
+        "**{}**\n> {}\n\n**{}**\n",
+        get_lang().recommend_taste_header,
+        profile.summary,
+        get_lang().recommend_songs_header,
+    );
+
+    let mut select_options = Vec::new();
+
+    for (i, track) in tracks.iter().enumerate() {
+        let source_badge = match track.source.as_str() {
+            "Spotify" => "🟢 `Spotify • Rare 30%`",
+            "SoundCloud" => "🟠 `SoundCloud • Epic 30%`",
+            _ => "🔴 `YouTube • Common 40%`",
+        };
+
+        let author = track.author.as_deref().unwrap_or("Unknown Artist");
+        let dur = format_duration(track.duration);
+
+        desc.push_str(&format!(
+            "{}. [{}]({}) — **{}** `[{}]`\n   ↳ {}\n",
+            i + 1,
+            truncate(&track.title, 45),
+            track.url,
+            author,
+            dur,
+            source_badge,
+        ));
+
+        let opt_label = format!("{}. {}", i + 1, truncate(&track.title, 80));
+        let opt_desc = format!("{} • {}", truncate(author, 40), track.source);
+        let opt_val = format!("{}:{}", cache_key, i);
+
+        select_options.push(
+            CreateSelectMenuOption::new(opt_label, opt_val).description(opt_desc),
+        );
+    }
+
+    if source_mgr.ai().is_enabled() {
+        if let Some(first) = tracks.first() {
+            let author = first.author.as_deref().unwrap_or("");
+            if let Ok(t) = source_mgr.ai().get_trivia(&first.title, author).await {
+                desc.push_str(&format!("\n> {}\n", t));
+            }
+        }
+    }
+
+    let embed = CreateEmbed::new()
+        .title(get_lang().recommend_title)
+        .description(desc)
+        .color(Color::from_rgb(255, 120, 0))
+        .footer(serenity::all::CreateEmbedFooter::new(
+            "Rarity Odds: 🔴 YouTube 40% • 🟢 Spotify 30% • 🟠 SoundCloud 30%",
+        ));
+
+    let select_menu = CreateSelectMenu::new(
+        "recommend_select",
+        CreateSelectMenuKind::String {
+            options: select_options,
+        },
+    )
+    .placeholder(get_lang().recommend_select_placeholder);
+
+    let row1 = CreateActionRow::SelectMenu(select_menu);
+
+    let play_all_btn = CreateButton::new(format!("recommend_all:{}", cache_key))
+        .label(get_lang().recommend_play_all)
+        .style(ButtonStyle::Success);
+
+    let row2 = CreateActionRow::Buttons(vec![play_all_btn]);
+
+    let _ = command
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .embed(embed)
+                .components(vec![row1, row2]),
         )
         .await;
 }

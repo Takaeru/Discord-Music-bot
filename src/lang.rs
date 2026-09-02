@@ -60,6 +60,15 @@ pub struct Lang {
     pub history_empty: &'static str,
     pub history_footer: &'static str,       // has {}
     pub history_cleared: &'static str,
+    pub cmd_recommend: &'static str,
+    pub recommend_title: &'static str,
+    pub recommend_taste_header: &'static str,
+    pub recommend_songs_header: &'static str,
+    pub recommend_play_all: &'static str,
+    pub recommend_select_placeholder: &'static str,
+    pub recommend_empty: &'static str,
+    pub recommend_enqueued_all: &'static str, // has {}
+    pub recommend_enqueued_one: &'static str, // has {}
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -218,7 +227,8 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_filter: "Apply an audio filter (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
     cmd_autoplay: "Toggle automatic music recommendations when the queue ends",
     cmd_playlist: "Manage personal saved music playlists (save, load, list, show, delete)",
-    cmd_history: "Show server playback history log (used as Autoplay reference)",
+    cmd_history: "View or clear the playback history log used for Autoplay (/history [clear])",
+    cmd_recommend: "Get AI music recommendations based on your server taste (40% YT, 30% Spotify, 30% SoundCloud)",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -252,6 +262,14 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     history_empty: "ℹ️ No tracks in playback history log yet.",
     history_footer: "Total: {} unique song(s) • Autoplay Reference Active",
     history_cleared: "🗑️ Playback history log has been cleared.",
+    recommend_title: "✨ AI Music Recommendations",
+    recommend_taste_header: "📊 Server Taste Profile",
+    recommend_songs_header: "🎵 Recommended Songs for You",
+    recommend_play_all: "▶️ Enqueue All",
+    recommend_select_placeholder: "Choose a song to play immediately...",
+    recommend_empty: "⚠️ Could not generate recommendations. Try playing some more songs first!",
+    recommend_enqueued_all: "✅ Enqueued **{}** recommended tracks into the queue!",
+    recommend_enqueued_one: "✅ Enqueued **{}** from recommendations!",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -395,9 +413,10 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_seek: "Lompat ke menit/detik tertentu pada lagu saat ini (contoh: 1:30 atau 90)",
     cmd_lyrics: "Tampilkan lirik lagu saat ini atau cari berdasarkan judul",
     cmd_filter: "Terapkan efek suara (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
-    cmd_autoplay: "Aktifkan atau matikan rekomendasi musik otomatis saat antrean habis",
+    cmd_autoplay: "Aktifkan/nonaktifkan rekomendasi musik otomatis saat antrean habis",
     cmd_playlist: "Kelola playlist musik pribadi (save, load, list, show, delete)",
-    cmd_history: "Lihat log riwayat lagu yang pernah diputar (acuan Autoplay)",
+    cmd_history: "Lihat atau bersihkan log riwayat lagu yang diputar (/history [clear])",
+    cmd_recommend: "Rekomendasi lagu berdasarkan selera server (40% YT, 30% Spotify, 30% SoundCloud)",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -431,6 +450,14 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     history_empty: "ℹ️ Belum ada riwayat lagu yang diputar.",
     history_footer: "Total: {} lagu unik • Acuan Autoplay Aktif",
     history_cleared: "🗑️ Log riwayat pemutaran musik berhasil dibersihkan.",
+    recommend_title: "✨ Rekomendasi Musik Spesial",
+    recommend_taste_header: "📊 Profil Selera Musik Server",
+    recommend_songs_header: "🎵 Lagu Rekomendasi untuk Kamu",
+    recommend_play_all: "▶️ Putar Semua ke Antrean",
+    recommend_select_placeholder: "Pilih lagu untuk langsung diputar...",
+    recommend_empty: "⚠️ Belum bisa meracik rekomendasi. Coba putar beberapa lagu terlebih dahulu!",
+    recommend_enqueued_all: "✅ Berhasil memasukkan **{}** lagu rekomendasi ke dalam antrean!",
+    recommend_enqueued_one: "✅ Berhasil memutar **{}** dari rekomendasi!",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -564,6 +591,12 @@ pub static ACTIVE_LANG: LazyLock<&'static Lang> = LazyLock::new(|| {
 
 pub fn get_lang() -> &'static Lang {
     &ACTIVE_LANG
+}
+
+pub fn is_id() -> bool {
+    std::env::var("BOT_LANG")
+        .map(|s| s.eq_ignore_ascii_case("id"))
+        .unwrap_or(false)
 }
 
 /// Format a lang string with positional {} placeholders.

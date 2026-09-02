@@ -103,6 +103,7 @@ pub struct QueueManager {
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
+    recommend_results: Arc<Mutex<HashMap<String, Vec<TrackMetadata>>>>,
     /// Set right before a manual stop (e.g. jump) so the old track's
     /// TrackEndHandler does NOT advance/cycle the queue again. The first
     /// End event consumes it (with a short TTL safety net).
@@ -124,6 +125,7 @@ impl QueueManager {
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
             search_results: Arc::new(Mutex::new(HashMap::new())),
+            recommend_results: Arc::new(Mutex::new(HashMap::new())),
             playlist_store,
         }
     }
@@ -403,6 +405,16 @@ impl QueueManager {
             .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
             .map(|e| e.play_next)
             .unwrap_or(false)
+    }
+
+    pub async fn set_recommend_results(&self, key: String, tracks: Vec<TrackMetadata>) {
+        let mut map = self.recommend_results.lock().await;
+        map.insert(key, tracks);
+    }
+
+    pub async fn get_recommend_results(&self, key: &str) -> Option<Vec<TrackMetadata>> {
+        let map = self.recommend_results.lock().await;
+        map.get(key).cloned()
     }
 
     pub async fn clear(&self, guild_id: GuildId) {

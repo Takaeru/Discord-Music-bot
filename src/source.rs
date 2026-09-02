@@ -2,6 +2,7 @@ use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use songbird::input::{Input, YoutubeDl};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -41,10 +42,20 @@ struct SpotifyTrackInfo {
     duration: Option<Duration>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TasteProfile {
+    pub top_artists: Vec<String>,
+    pub dominant_region: String,
+    pub top_keywords: Vec<String>,
+    pub summary: String,
+}
+
 pub struct SourceManager {
     http_client: reqwest::Client,
     query_cache: Cache<String, Vec<TrackMetadata>>,
     stream_cache: Cache<String, String>,
+    spotify_token_cache: Cache<String, String>,
+    ai_client: Arc<crate::ai::AiClient>,
 }
 
 impl SourceManager {
@@ -67,7 +78,16 @@ impl SourceManager {
                 .max_capacity(50)
                 .time_to_live(Duration::from_secs(2 * 3600))
                 .build(),
+            spotify_token_cache: Cache::builder()
+                .max_capacity(2)
+                .time_to_live(Duration::from_secs(50 * 60))
+                .build(),
+            ai_client: Arc::new(crate::ai::AiClient::init()),
         }
+    }
+
+    pub fn ai(&self) -> &Arc<crate::ai::AiClient> {
+        &self.ai_client
     }
 
     /// Reads MAX_PLAYLIST_ITEMS (or MAX_PLAYLIST_TRACKS) from .env. Defaults to 50.
@@ -675,5 +695,438 @@ impl SourceManager {
         }
 
         None
+    }
+
+    /// Fetches an access token for Spotify: checks env credentials first, then falls back to Spotify Web anonymous token.
+    pub async fn get_spotify_token(&self) -> Result<String, String> {
+        if let Some(token) = self.spotify_token_cache.get("token").await {
+            return Ok(token);
+        }
+
+        // 1. Check if official client credentials exist in .env
+        if let (Ok(client_id), Ok(client_secret)) = (
+            std::env::var("SPOTIFY_CLIENT_ID"),
+            std::env::var("SPOTIFY_CLIENT_SECRET"),
+        ) {
+            if !client_id.trim().is_empty() && !client_secret.trim().is_empty() {
+                let params = [("grant_type", "client_credentials")];
+                if let Ok(res) = self
+                    .http_client
+                    .post("https://accounts.spotify.com/api/token")
+                    .basic_auth(client_id.trim(), Some(client_secret.trim()))
+                    .form(&params)
+                    .send()
+                    .await
+                {
+                    if res.status().is_success() {
+                        if let Ok(json) = res.json::<serde_json::Value>().await {
+                            if let Some(token) = json.get("access_token").and_then(|v| v.as_str()) {
+                                self.spotify_token_cache
+                                    .insert("token".to_string(), token.to_string())
+                                    .await;
+                                return Ok(token.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Default: Anonymous guest token from Spotify Web Player
+        let res = self
+            .http_client
+            .get("https://open.spotify.com/get_access_token")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            .send()
+            .await
+            .map_err(|e| format!("Spotify token HTTP error: {}", e))?;
+
+        if !res.status().is_success() {
+            return Err(format!("Spotify token HTTP status: {}", res.status()));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Spotify token JSON: {}", e))?;
+
+        let token = json
+            .get("accessToken")
+            .or_else(|| json.get("access_token"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Could not extract accessToken from Spotify web".to_string())?
+            .to_string();
+
+        self.spotify_token_cache
+            .insert("token".to_string(), token.clone())
+            .await;
+        Ok(token)
+    }
+
+    /// Searches Spotify tracks via Web API using cached anonymous token.
+    pub async fn search_spotify(&self, query: &str, limit: usize) -> Result<Vec<TrackMetadata>, String> {
+        let token = self.get_spotify_token().await?;
+        let encoded_query = percent_encoding::utf8_percent_encode(
+            query,
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
+        let url = format!(
+            "https://api.spotify.com/v1/search?q={}&type=track&limit={}",
+            encoded_query,
+            limit.min(10)
+        );
+
+        let res = self
+            .http_client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            .send()
+            .await
+            .map_err(|e| format!("Spotify search HTTP error: {}", e))?;
+
+        if !res.status().is_success() {
+            return Err(format!("Spotify search failed: HTTP {}", res.status()));
+        }
+
+        let json: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Spotify search JSON: {}", e))?;
+
+        let mut tracks = Vec::new();
+        if let Some(items) = json
+            .get("tracks")
+            .and_then(|t| t.get("items"))
+            .and_then(|i| i.as_array())
+        {
+            for item in items {
+                let title = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if title.is_empty() {
+                    continue;
+                }
+
+                let artist = item
+                    .get("artists")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|ar| ar.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("Spotify Artist")
+                    .to_string();
+
+                let url = item
+                    .get("external_urls")
+                    .and_then(|u| u.get("spotify"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let thumbnail = item
+                    .get("album")
+                    .and_then(|al| al.get("images"))
+                    .and_then(|imgs| imgs.as_array())
+                    .and_then(|imgs| imgs.first())
+                    .and_then(|img| img.get("url"))
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string());
+
+                let duration = item
+                    .get("duration_ms")
+                    .and_then(|d| d.as_u64())
+                    .map(Duration::from_millis);
+
+                let stream_url = format!("ytsearch1:{} - {}", artist, title);
+
+                tracks.push(TrackMetadata {
+                    title,
+                    url,
+                    stream_url,
+                    duration,
+                    thumbnail,
+                    author: Some(artist),
+                    source: "Spotify".to_string(),
+                    requester: None,
+                    view_count: None,
+                });
+            }
+        }
+
+        Ok(tracks)
+    }
+
+    /// Searches SoundCloud using yt-dlp scsearch.
+    pub async fn search_soundcloud(&self, query: &str, limit: usize) -> Result<Vec<TrackMetadata>, String> {
+        let sc_query = format!("scsearch{}:{}", limit.min(10), query);
+        self.resolve_single_query(&sc_query).await
+    }
+
+    /// Analyzes playback history to construct a profile of the server's music taste.
+    pub fn analyze_taste(history: &[TrackMetadata]) -> TasteProfile {
+        if history.is_empty() {
+            return TasteProfile {
+                top_artists: vec![],
+                dominant_region: "Global".to_string(),
+                top_keywords: vec![],
+                summary: "Belum ada riwayat lagu. Merekomendasikan lagu viral global terpopuler!".to_string(),
+            };
+        }
+
+        use std::collections::HashMap;
+        let mut artist_counts: HashMap<String, usize> = HashMap::new();
+        let mut jp_score = 0;
+        let mut kr_score = 0;
+        let mut id_score = 0;
+        let mut en_score = 0;
+
+        let id_keywords = [
+            "lagu", "dangdut", "koplo", "galau", "indonesia", "sheila", "tulus", "hindia",
+            "fiersa", "denny", "caknan", "mahalini", "tiara", "lyodra", "judika", "noah",
+            "dewa", "rossa", "armada", "payung teduh", "nadin", "feast", "fourtwnty", "pamungkas",
+        ];
+
+        let genre_keywords = [
+            "lofi", "remix", "cover", "acoustic", "rock", "pop", "r&b", "hip hop", "rap",
+            "jazz", "city pop", "vocaloid", "ost", "anime", "slowed", "reverb", "phonk",
+            "edm", "chill", "metal", "synthwave", "ballad", "piano",
+        ];
+
+        let mut keyword_counts: HashMap<String, usize> = HashMap::new();
+
+        for track in history {
+            if let Some(ref author) = track.author {
+                let a = author.trim();
+                if !a.is_empty()
+                    && a != "YouTube"
+                    && a != "SoundCloud"
+                    && a != "Spotify Artist"
+                    && a != "Various Artists"
+                {
+                    *artist_counts.entry(a.to_string()).or_insert(0) += 1;
+                }
+            }
+
+            let text = format!("{} {}", track.title, track.author.as_deref().unwrap_or(""));
+            let text_lower = text.to_lowercase();
+
+            // Detect Japanese (Hiragana, Katakana, CJK Ideographs)
+            let has_jp = text.chars().any(|c| {
+                (c >= '\u{3040}' && c <= '\u{30ff}') || (c >= '\u{4e00}' && c <= '\u{9faf}')
+            });
+            if has_jp {
+                jp_score += 3;
+            }
+
+            // Detect Korean Hangul
+            let has_kr = text.chars().any(|c| c >= '\u{ac00}' && c <= '\u{d7af}');
+            if has_kr {
+                kr_score += 3;
+            }
+
+            // Detect Indonesian
+            if id_keywords.iter().any(|&k| text_lower.contains(k)) {
+                id_score += 2;
+            } else {
+                en_score += 1;
+            }
+
+            for &k in &genre_keywords {
+                if text_lower.contains(k) {
+                    *keyword_counts.entry(k.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Top artists sorted
+        let mut artists_vec: Vec<(String, usize)> = artist_counts.into_iter().collect();
+        artists_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_artists: Vec<String> = artists_vec.into_iter().take(3).map(|(a, _)| a).collect();
+
+        // Top keywords sorted
+        let mut kw_vec: Vec<(String, usize)> = keyword_counts.into_iter().collect();
+        kw_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_keywords: Vec<String> = kw_vec.into_iter().take(3).map(|(k, _)| k).collect();
+
+        // Dominant region
+        let dominant_region = if jp_score >= kr_score && jp_score >= id_score && jp_score > en_score / 3 {
+            "🇯🇵 J-Pop / Anime".to_string()
+        } else if kr_score >= jp_score && kr_score >= id_score && kr_score > en_score / 3 {
+            "🇰🇷 K-Pop / K-Indie".to_string()
+        } else if id_score >= jp_score && id_score >= kr_score && id_score > 0 {
+            "🇮🇩 Indonesian Pop / Indie".to_string()
+        } else {
+            "🌐 International / Pop".to_string()
+        };
+
+        let mut parts = vec![dominant_region.clone()];
+        if !top_artists.is_empty() {
+            parts.push(format!("Top Artist: {}", top_artists.join(", ")));
+        }
+        if !top_keywords.is_empty() {
+            parts.push(format!("Genre: {}", top_keywords.join(", ")));
+        }
+        let summary = parts.join(" • ");
+
+        TasteProfile {
+            top_artists,
+            dominant_region,
+            top_keywords,
+            summary,
+        }
+    }
+
+    /// Generates music recommendations based on server playback history or custom mood
+    /// using weighted probability rarity:
+    /// - 40% YouTube
+    /// - 30% Spotify
+    /// - 30% SoundCloud
+    pub async fn get_recommendations(
+        &self,
+        history: &[TrackMetadata],
+        target_count: usize,
+        mood: Option<&str>,
+    ) -> (TasteProfile, Vec<TrackMetadata>) {
+        let mut profile = Self::analyze_taste(history);
+        let mut seeds = Vec::new();
+
+        // 1. If custom mood is provided, try AI mood curation first
+        if let Some(m) = mood.filter(|s| !s.trim().is_empty()) {
+            if self.ai_client.is_enabled() {
+                if let Ok(curation) = self.ai_client.curate_mood(m, history).await {
+                    profile.summary = format!("🎭 **Mood: \"{}\"**\n{}", m, curation.commentary);
+                    seeds = curation.query_seeds;
+                }
+            }
+            if seeds.is_empty() {
+                seeds.push(format!("{} songs", m.trim()));
+                seeds.push(format!("{} music", m.trim()));
+                profile.summary = format!("🎭 **Mood:** \"{}\"", m.trim());
+            }
+        } else {
+            // 2. No custom mood -> Use AI DJ taste commentary if enabled
+            if self.ai_client.is_enabled() {
+                if let Ok(dj_review) = self.ai_client.review_taste(history).await {
+                    profile.summary = format!("{}\n\n*{}*", dj_review, profile.summary);
+                }
+            }
+
+            // Build list of search seeds based on taste
+            for artist in &profile.top_artists {
+                seeds.push(format!("{} songs", artist));
+                seeds.push(format!("{} hits", artist));
+            }
+
+            if profile.dominant_region.contains("J-Pop") {
+                seeds.push("J-Pop popular hits".to_string());
+                seeds.push("Anime OST popular songs".to_string());
+                seeds.push("Vocaloid trending hits".to_string());
+            } else if profile.dominant_region.contains("K-Pop") {
+                seeds.push("K-Pop trending hits".to_string());
+                seeds.push("Korean indie chill".to_string());
+            } else if profile.dominant_region.contains("Indonesian") {
+                seeds.push("Lagu Indonesia populer hits".to_string());
+                seeds.push("Indie Indonesia trending".to_string());
+            } else {
+                seeds.push("Trending pop hits".to_string());
+                seeds.push("Top acoustic hits".to_string());
+            }
+
+            for kw in &profile.top_keywords {
+                seeds.push(format!("{} music playlist", kw));
+            }
+        }
+
+        if seeds.is_empty() {
+            seeds.push("Popular songs".to_string());
+        }
+
+        let is_dup = |cand: &TrackMetadata, existing_batch: &[TrackMetadata]| -> bool {
+            let cand_yt_id = Self::extract_youtube_id(&cand.url)
+                .or_else(|| Self::extract_youtube_id(&cand.stream_url));
+
+            // Check against history
+            for h in history {
+                if h.title.eq_ignore_ascii_case(&cand.title) {
+                    return true;
+                }
+                if !h.url.is_empty() && h.url == cand.url {
+                    return true;
+                }
+                if let Some(ref cid) = cand_yt_id {
+                    let h_yt_id = Self::extract_youtube_id(&h.url)
+                        .or_else(|| Self::extract_youtube_id(&h.stream_url));
+                    if h_yt_id.as_deref() == Some(cid.as_str()) {
+                        return true;
+                    }
+                }
+            }
+
+            // Check against current recommendation batch
+            for b in existing_batch {
+                if b.title.eq_ignore_ascii_case(&cand.title) {
+                    return true;
+                }
+                if !b.url.is_empty() && b.url == cand.url {
+                    return true;
+                }
+            }
+
+            false
+        };
+
+        let mut results = Vec::new();
+        let max_loops = target_count * 4;
+        let mut loop_count = 0;
+
+        while results.len() < target_count && loop_count < max_loops {
+            loop_count += 1;
+            let seed_idx = (rand::random::<usize>()) % seeds.len();
+            let seed = &seeds[seed_idx];
+
+            // Roll weighted rarity (1..=100)
+            // 1..=40: YouTube (40%)
+            // 41..=70: Spotify (30%)
+            // 71..=100: SoundCloud (30%)
+            let roll = (rand::random::<u32>() % 100) + 1;
+
+            let candidate_list = if (41..=70).contains(&roll) {
+                // Spotify
+                match self.search_spotify(seed, 5).await {
+                    Ok(list) if !list.is_empty() => list,
+                    _ => self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default(),
+                }
+            } else if roll > 70 {
+                // SoundCloud
+                match self.search_soundcloud(seed, 5).await {
+                    Ok(list) if !list.is_empty() => list,
+                    _ => self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default(),
+                }
+            } else {
+                // YouTube
+                self.resolve_single_query(&format!("ytsearch5:{}", seed)).await.unwrap_or_default()
+            };
+
+            for cand in candidate_list {
+                if !is_dup(&cand, &results) {
+                    results.push(cand);
+                    if results.len() >= target_count {
+                        break;
+                    }
+                }
+            }
+        }
+
+        (profile, results)
     }
 }

@@ -3,7 +3,8 @@ mod handler;
 mod lang;
 pub mod playlist;
 mod queue;
-mod source;
+pub mod source;
+pub mod ai;
 mod utils;
 
 use handler::Handler;
