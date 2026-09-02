@@ -506,8 +506,6 @@ impl SourceManager {
                     cmd.args([
                         "--default-search",
                         "ytsearch",
-                        "--extractor-args",
-                        "youtube:player_client=android,web",
                     ]);
                 }
 
@@ -630,7 +628,6 @@ impl SourceManager {
         }
 
         let target = url.to_string();
-        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be") || url.starts_with("ytsearch");
         let ytdlp_bin = std::env::var("YTDLP_PATH").unwrap_or_else(|_| "yt-dlp".to_string());
 
         let task = tokio::task::spawn_blocking(move || {
@@ -649,11 +646,6 @@ impl SourceManager {
                 "2",
                 "--no-warnings",
             ]);
-
-            if is_youtube {
-                cmd.args(["--extractor-args", "youtube:player_client=android,web"]);
-            }
-
             cmd.arg(&target);
 
             let output = cmd.output().map_err(|e| format!("Failed to run yt-dlp -g: {}", e))?;
@@ -680,9 +672,6 @@ impl SourceManager {
                 "2",
                 "--no-warnings",
             ]);
-            if is_youtube {
-                fallback_cmd.args(["--extractor-args", "youtube:player_client=android,web"]);
-            }
             fallback_cmd.arg(&target);
 
             if let Ok(fallback_out) = fallback_cmd.output() {
@@ -729,72 +718,73 @@ impl SourceManager {
         start_time: Option<Duration>,
         filter: Option<&str>,
     ) -> Input {
-        let stream_target = match self.extract_direct_stream(url).await {
-            Ok(direct) => direct,
-            Err(_) => url.to_string(),
-        };
+        let stream_target_res = self.extract_direct_stream(url).await;
 
-        info!(
-            "Creating fast-loading 48kHz audio pipeline for: {} (seek: {:?}, filter: {:?})",
-            url, start_time, filter
-        );
+        if let Ok(stream_target) = stream_target_res {
+            info!(
+                "Creating fast-loading 48kHz audio pipeline for direct stream: {} (seek: {:?}, filter: {:?})",
+                url, start_time, filter
+            );
 
-        let filter_owned = filter.map(|s| s.to_string());
+            let filter_owned = filter.map(|s| s.to_string());
+            let res = tokio::task::spawn_blocking(move || {
+                let mut ffmpeg = std::process::Command::new("ffmpeg");
 
-        let res = tokio::task::spawn_blocking(move || {
-            let mut ffmpeg = std::process::Command::new("ffmpeg");
+                if let Some(dur) = start_time {
+                    let secs = dur.as_secs_f64();
+                    ffmpeg.args(["-ss", &secs.to_string()]);
+                }
 
-            if let Some(dur) = start_time {
-                let secs = dur.as_secs_f64();
-                ffmpeg.args(["-ss", &secs.to_string()]);
+                ffmpeg.args([
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                    "-probesize",
+                    "32768",
+                    "-analyzeduration",
+                    "0",
+                    "-nostdin",
+                    "-i",
+                    &stream_target,
+                    "-vn",
+                ]);
+
+                if let Some(ref f) = filter_owned {
+                    ffmpeg.args(["-af", f]);
+                }
+
+                ffmpeg.args([
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "96k",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-f",
+                    "ogg",
+                    "pipe:1",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
+
+                let child = ffmpeg.spawn().ok()?;
+                Some(songbird::input::ChildContainer::new(vec![child]))
+            })
+            .await;
+
+            if let Ok(Some(container)) = res {
+                return container.into();
             }
-
-            ffmpeg.args([
-                "-reconnect",
-                "1",
-                "-reconnect_streamed",
-                "1",
-                "-reconnect_delay_max",
-                "5",
-                "-probesize",
-                "32768",
-                "-analyzeduration",
-                "0",
-                "-nostdin",
-                "-i",
-                &stream_target,
-                "-vn",
-            ]);
-
-            if let Some(ref f) = filter_owned {
-                ffmpeg.args(["-af", f]);
-            }
-
-            ffmpeg.args([
-                "-c:a",
-                "libopus",
-                "-b:a",
-                "96k",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-f",
-                "ogg",
-                "pipe:1",
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-
-            let child = ffmpeg.spawn().ok()?;
-            Some(songbird::input::ChildContainer::new(vec![child]))
-        })
-        .await;
-
-        match res {
-            Ok(Some(container)) => container.into(),
-            _ => YoutubeDl::new(self.http_client.clone(), url.to_string()).into(),
         }
+
+        // Graceful Songbird built-in fallback if direct progressive extraction was unavailable
+        info!("Using Songbird YoutubeDl fallback for: {}", url);
+        YoutubeDl::new(self.http_client.clone(), url.to_string()).into()
     }
 
     pub fn extract_youtube_id(url: &str) -> Option<String> {
