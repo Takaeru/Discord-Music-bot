@@ -17,6 +17,8 @@ pub struct TrackMetadata {
     pub source: String,
     pub requester: Option<String>,
     pub view_count: Option<u64>,
+    #[serde(default)]
+    pub is_official: bool,
 }
 
 #[derive(Deserialize)]
@@ -144,6 +146,7 @@ impl SourceManager {
                 source: "Spotify".to_string(),
                 requester: None,
                 view_count: None,
+                is_official: true,
             });
 
             // For the remaining tracks in the playlist, defer audio resolution until playback
@@ -159,6 +162,7 @@ impl SourceManager {
                     source: "Spotify".to_string(),
                     requester: None,
                     view_count: None,
+                    is_official: true,
                 });
             }
 
@@ -606,6 +610,8 @@ impl SourceManager {
             source_hint.to_string()
         };
 
+        let is_official = Self::is_verified_official_entry(&title, author.as_deref(), &source);
+
         Some(TrackMetadata {
             title,
             url,
@@ -616,6 +622,7 @@ impl SourceManager {
             source,
             requester: None,
             view_count: entry.view_count,
+            is_official,
         })
     }
 
@@ -1028,6 +1035,68 @@ impl SourceManager {
         score
     }
 
+    /// Evaluates whether a track strictly satisfies the Master Specification's official music release criteria.
+    pub fn is_verified_official_entry(title: &str, author: Option<&str>, source: &str) -> bool {
+        let title_lower = title.to_lowercase();
+        let uploader_lower = author.unwrap_or("").to_lowercase();
+
+        // 1. Immediately reject obvious non-official content
+        if title_lower.contains("cover")
+            || title_lower.contains("nightcore")
+            || title_lower.contains("slowed")
+            || title_lower.contains("reverb")
+            || title_lower.contains("remix")
+            || title_lower.contains("fanmade")
+            || title_lower.contains("amv")
+            || title_lower.contains("reaction")
+            || title_lower.contains("1 hour")
+            || title_lower.contains("10 hour")
+            || title_lower.contains("loop")
+            || uploader_lower.contains("nightcore")
+            || uploader_lower.contains("lyrics")
+            || uploader_lower.contains("covers")
+        {
+            return false;
+        }
+
+        // 2. Spotify official catalog releases are official
+        if source == "Spotify" {
+            return true;
+        }
+
+        // 3. YouTube Music auto-generated Topic channel (directly delivered by labels: Sony, Universal, Warner, etc.)
+        if uploader_lower.ends_with("- topic") {
+            return true;
+        }
+
+        // 4. Official verified channel / label accounts
+        if uploader_lower.contains("vevo")
+            || uploader_lower.contains("official")
+            || uploader_lower.contains("records")
+            || uploader_lower.contains("entertainment")
+        {
+            return true;
+        }
+
+        // 5. Official video/audio tags in title
+        if title_lower.contains("official video")
+            || title_lower.contains("official music video")
+            || title_lower.contains("official audio")
+            || title_lower.contains("official mv")
+            || title_lower.contains("[official]")
+            || title_lower.contains("(official)")
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Convenience checker for TrackMetadata
+    pub fn is_verified_official(track: &TrackMetadata) -> bool {
+        Self::is_verified_official_entry(&track.title, track.author.as_deref(), &track.source)
+    }
+
     /// Searches Spotify tracks via Web API with graceful official Topic fallback.
     pub async fn search_spotify(&self, query: &str, limit: usize) -> Result<Vec<TrackMetadata>, String> {
         if let Ok(token) = self.get_spotify_token().await {
@@ -1113,6 +1182,7 @@ impl SourceManager {
                                     source: "Spotify".to_string(),
                                     requester: None,
                                     view_count: None,
+                                    is_official: true,
                                 });
                             }
                         }
@@ -1463,6 +1533,31 @@ impl SourceManager {
             }
         }
 
+        // Check for current track similarity requests (Master Spec Section 15 & 16)
+        let is_similarity_prompt = if let Some(m) = mood {
+            let ml = m.to_lowercase();
+            ml.contains("mirip")
+                || ml.contains("similar")
+                || ml.contains("like this")
+                || ml.contains("seperti lagu")
+                || ml.contains("vibe seperti")
+        } else {
+            false
+        };
+
+        if is_similarity_prompt {
+            if let Some(last_song) = history.last() {
+                let artist = last_song.author.as_deref().unwrap_or("");
+                if !artist.is_empty() {
+                    seeds.push(format!("songs similar to {} by {}", last_song.title, artist));
+                    seeds.push(format!("{} top tracks", artist));
+                    seeds.push(format!("artist like {}", artist));
+                } else {
+                    seeds.push(format!("songs similar to {}", last_song.title));
+                }
+            }
+        }
+
         if seeds.is_empty() {
             seeds.push("Popular songs".to_string());
         }
@@ -1528,55 +1623,96 @@ impl SourceManager {
             let seed_idx = (rand::random::<usize>()) % seeds.len();
             let seed = &seeds[seed_idx];
 
-            let candidate_list = match platform_target {
+            let candidate_opt: Option<TrackMetadata> = match platform_target {
                 PlatformTarget::Spotify => {
-                    match self.search_spotify(seed, query_limit).await {
-                        Ok(list) if !list.is_empty() => list,
-                        _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                    let spotify_list = self.search_spotify(seed, query_limit).await.unwrap_or_default();
+                    let mut found = None;
+                    for cand in &spotify_list {
+                        if is_candidate_valid(cand, &results) && cand.is_official {
+                            found = Some(cand.clone());
+                            break;
+                        }
                     }
+                    found.or_else(|| spotify_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
                 PlatformTarget::SoundCloud => {
-                    match self.search_soundcloud(seed, query_limit).await {
-                        Ok(list) if !list.is_empty() => list,
-                        _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                    let sc_list = self.search_soundcloud(seed, query_limit).await.unwrap_or_default();
+                    let mut found = None;
+                    for cand in &sc_list {
+                        if is_candidate_valid(cand, &results) && cand.is_official {
+                            found = Some(cand.clone());
+                            break;
+                        }
                     }
+                    found.or_else(|| sc_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
                 PlatformTarget::YouTube => {
-                    self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default()
+                    let yt_list = self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default();
+                    let mut found = None;
+                    for cand in &yt_list {
+                        if is_candidate_valid(cand, &results) && cand.is_official {
+                            found = Some(cand.clone());
+                            break;
+                        }
+                    }
+                    found.or_else(|| yt_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
                 PlatformTarget::Any => {
-                    // Roll weighted rarity (1..=100)
-                    // 1..=40: YouTube (40%)
-                    // 41..=70: Spotify (30%)
-                    // 71..=100: SoundCloud (30%)
-                    let roll = (rand::random::<u32>() % 100) + 1;
+                    // Master Specification Section 8 Official Search Algorithm:
+                    // 1. YouTube Official
+                    // 2. Spotify Official
+                    // 3. SoundCloud Official
+                    // 4. Non-Official Fallback
 
-                    if (41..=70).contains(&roll) {
-                        // Spotify
-                        match self.search_spotify(seed, query_limit).await {
-                            Ok(list) if !list.is_empty() => list,
-                            _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
+                    // Step 1: Search YouTube for official release
+                    let yt_list = self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default();
+                    let mut selected = None;
+                    for cand in &yt_list {
+                        if is_candidate_valid(cand, &results) && cand.is_official {
+                            selected = Some(cand.clone());
+                            break;
                         }
-                    } else if roll > 70 {
-                        // SoundCloud
-                        match self.search_soundcloud(seed, query_limit).await {
-                            Ok(list) if !list.is_empty() => list,
-                            _ => self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default(),
-                        }
-                    } else {
-                        // YouTube
-                        self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default()
                     }
+
+                    // Step 2: If no YouTube official found, search Spotify Official
+                    if selected.is_none() {
+                        if let Ok(spot_list) = self.search_spotify(seed, query_limit).await {
+                            for cand in &spot_list {
+                                if is_candidate_valid(cand, &results) && cand.is_official {
+                                    selected = Some(cand.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Step 3: If no Spotify official found, search SoundCloud Official
+                    if selected.is_none() {
+                        if let Ok(sc_list) = self.search_soundcloud(seed, query_limit).await {
+                            for cand in &sc_list {
+                                if is_candidate_valid(cand, &results) && cand.is_official {
+                                    selected = Some(cand.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Step 4: If no official release exists on any platform, use non-official fallback
+                    if selected.is_none() {
+                        if let Some(cand) = yt_list.into_iter().find(|c| is_candidate_valid(c, &results)) {
+                            let mut fallback = cand;
+                            fallback.is_official = false;
+                            selected = Some(fallback);
+                        }
+                    }
+
+                    selected
                 }
             };
 
-            for cand in candidate_list {
-                if is_candidate_valid(&cand, &results) {
-                    results.push(cand);
-                    if results.len() >= target_count {
-                        break;
-                    }
-                }
+            if let Some(cand) = candidate_opt {
+                results.push(cand);
             }
         }
 

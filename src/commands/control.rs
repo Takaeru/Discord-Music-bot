@@ -1049,21 +1049,23 @@ pub fn build_recommend_view(
             _ => "🔴 `YouTube`",
         };
 
+        let official_badge = if track.is_official { " ⭐ Official" } else { " 🎧 Community" };
         let author = track.author.as_deref().unwrap_or("Unknown Artist");
         let dur = format_duration(track.duration);
 
         desc.push_str(&format!(
-            "{}. [{}]({}) — **{}** `[{}]` ↳ {}\n",
+            "{}. [{}]({}) — **{}** `[{}]` ↳ {}{}\n",
             global_idx + 1,
             truncate(&track.title, 45),
             track.url,
             truncate(author, 25),
             dur,
             source_badge,
+            official_badge,
         ));
 
         let opt_label = format!("{}. {}", global_idx + 1, truncate(&track.title, 80));
-        let opt_desc = format!("{} • {}", truncate(author, 40), track.source);
+        let opt_desc = format!("{} • {}{} • {}", truncate(author, 30), dur, official_badge, track.source);
         let opt_val = format!("{}:{}", cache_key, global_idx);
 
         select_options.push(
@@ -1085,8 +1087,8 @@ pub fn build_recommend_view(
             Color::from_rgb(255, 0, 0),
         ),
         crate::source::PlatformTarget::Any => (
-            "Rarity Odds: 🔴 YouTube 40% • 🟢 Spotify 30% • 🟠 SoundCloud 30%",
-            Color::from_rgb(255, 120, 0),
+            "✨ Official First Cascade: 🔴 YouTube Official ➔ 🟢 Spotify Official ➔ 🟠 SoundCloud Official ➔ 🎧 Fallback",
+            Color::from_rgb(88, 101, 242),
         ),
     };
 

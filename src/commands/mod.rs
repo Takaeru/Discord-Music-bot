@@ -264,6 +264,26 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .max_int_value(100)
                 .required(false),
             ),
+        CreateCommand::new("recommendation")
+            .description("Music AI Skill: Discover curated recommendations matching your mood or request")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "mood",
+                    "Natural-language prompt (e.g. 'lagu Jepang buat malam hujan', 'mirip ini')",
+                )
+                .required(true),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Integer,
+                    "count",
+                    "Number of recommendations to generate (1 - 100, default: 5)",
+                )
+                .min_int_value(1)
+                .max_int_value(100)
+                .required(false),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -301,7 +321,7 @@ pub async fn handle_command(
         "autoplay" => handle_autoplay(ctx, command, queue_mgr).await,
         "playlist" => handle_playlist(ctx, command, source_mgr, queue_mgr, playlist_store).await,
         "history" => handle_history(ctx, command, queue_mgr).await,
-        "recommend" => handle_recommend(ctx, command, source_mgr, queue_mgr).await,
+        "recommend" | "recommendation" => handle_recommend(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
