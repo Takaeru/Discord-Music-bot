@@ -21,6 +21,7 @@ pub struct Lang {
     pub cmd_ping: &'static str,
     pub cmd_help: &'static str,
     pub cmd_seek: &'static str,
+    pub cmd_lyrics: &'static str,
 
     // === Command responses ===
     pub playback_paused: &'static str,
@@ -36,6 +37,8 @@ pub struct Lang {
     pub jumped_to: &'static str,         // has #{} {} {}
     pub repeat_mode_set: &'static str,   // has {} {}
     pub seek_success: &'static str,      // has {}
+    pub lyrics_title: &'static str,      // has {} {}
+    pub lyrics_footer: &'static str,     // has {}
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -60,6 +63,8 @@ pub struct Lang {
     pub not_connected_vc: &'static str,
     pub invalid_time_format: &'static str,
     pub seek_exceeds_duration: &'static str, // has {}
+    pub lyrics_not_found: &'static str,      // has {}
+    pub lyrics_no_track: &'static str,
 
     // === Embed: Now Playing ===
     pub now_playing_title: &'static str,
@@ -124,6 +129,7 @@ pub struct Lang {
     pub help_stop_leave: &'static str,
     pub help_ping: &'static str,
     pub help_seek: &'static str,
+    pub help_lyrics: &'static str,
 
     // === Ping ===
     pub ping_title: &'static str,
@@ -183,6 +189,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_ping: "Check bot latency and audio pipeline status",
     cmd_help: "Show available music commands",
     cmd_seek: "Seek to a specific time in the current track (e.g. 1:30 or 90)",
+    cmd_lyrics: "Display lyrics for the current song or a search query",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -197,6 +204,8 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     jumped_to: "⏭️ Jumped to **#{}**: [**{}**]({})",
     repeat_mode_set: "{} Repeat mode set to **{}**",
     seek_success: "⏩ Seeked to **{}**",
+    lyrics_title: "📝 Lyrics: {} - {}",
+    lyrics_footer: "Powered by LRCLIB • Requested by {}",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -220,6 +229,8 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     not_connected_vc: "❌ Not connected to a voice channel.",
     invalid_time_format: "❌ Invalid time format. Use `mm:ss` (e.g. `1:30`) or seconds (e.g. `90`).",
     seek_exceeds_duration: "⚠️ Cannot seek beyond track duration (total: **{}**).",
+    lyrics_not_found: "❌ No lyrics found for **{}**.",
+    lyrics_no_track: "⚠️ Nothing is currently playing. Please specify a song name: `/lyrics <song>`",
 
     now_playing_title: "🎵 Now Playing",
     field_duration: "⏱️ Duration",
@@ -280,6 +291,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_stop_leave: "Stop music or disconnect bot from voice",
     help_ping: "Check bot latency and audio engine status",
     help_seek: "Seek to a specific timestamp in the current track",
+    help_lyrics: "Show lyrics for the current song or specified title",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Bot Gateway Status",
@@ -331,6 +343,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_ping: "Cek latensi bot dan status pipeline audio",
     cmd_help: "Tampilkan perintah musik yang tersedia",
     cmd_seek: "Lompat ke menit/detik tertentu pada lagu saat ini (contoh: 1:30 atau 90)",
+    cmd_lyrics: "Tampilkan lirik lagu saat ini atau cari berdasarkan judul",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -345,6 +358,8 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     jumped_to: "⏭️ Melompat ke **#{}**: [**{}**]({})",
     repeat_mode_set: "{} Mode ulang diatur ke **{}**",
     seek_success: "⏩ Berhasil melompat ke **{}**",
+    lyrics_title: "📝 Lirik: {} - {}",
+    lyrics_footer: "Didukung oleh LRCLIB • Diminta oleh {}",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -368,6 +383,8 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     not_connected_vc: "❌ Tidak terhubung ke voice channel.",
     invalid_time_format: "❌ Format waktu salah. Gunakan `mm:ss` (contoh: `1:30`) atau detik (contoh: `90`).",
     seek_exceeds_duration: "⚠️ Tidak bisa melompat melebihi durasi lagu (total: **{}**).",
+    lyrics_not_found: "❌ Lirik tidak ditemukan untuk **{}**.",
+    lyrics_no_track: "⚠️ Tidak ada lagu yang sedang diputar. Harap sebutkan judul lagu: `/lyrics <judul>`",
 
     now_playing_title: "🎵 Sekarang Diputar",
     field_duration: "⏱️ Durasi",
@@ -428,6 +445,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_stop_leave: "Hentikan musik atau putuskan bot dari voice",
     help_ping: "Cek latensi bot dan status mesin audio",
     help_seek: "Lompat ke menit/detik tertentu pada lagu yang sedang diputar",
+    help_lyrics: "Tampilkan lirik untuk lagu saat ini atau lagu yang dicari",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Status Gateway Bot",

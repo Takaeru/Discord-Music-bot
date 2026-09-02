@@ -1,5 +1,6 @@
 pub mod control;
 pub mod events;
+pub mod lyrics;
 pub mod play;
 pub mod queue;
 
@@ -19,6 +20,7 @@ use self::control::{
     handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume, handle_seek,
     handle_shuffle, handle_skip, handle_stop, handle_volume,
 };
+use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
@@ -123,6 +125,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 )
                 .required(true),
             ),
+        CreateCommand::new("lyrics")
+            .description(get_lang().cmd_lyrics)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "query",
+                    "Song title to search lyrics for (defaults to currently playing)",
+                )
+                .required(false),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -154,6 +166,7 @@ pub async fn handle_command(
         "volume" => handle_volume(ctx, command).await,
         "playnext" => handle_playnext(ctx, command, source_mgr, queue_mgr).await,
         "seek" => handle_seek(ctx, command, source_mgr, queue_mgr).await,
+        "lyrics" => handle_lyrics(ctx, command, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,

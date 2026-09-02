@@ -63,6 +63,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/stop` | Stop playback and clear the queue | `/stop` |
 | `/queue` | View current queue, platform sources, repeat mode, and total duration | `/queue` |
 | `/nowplaying` | Show details, platform source, thumbnail, and active loop mode | `/nowplaying` |
+| `/lyrics [query]` | Show lyrics for the current song or search by title | `/lyrics` or `/lyrics query:yoasobi idol` |
 | `/jump <pos>` | Jump to a specific position in the queue | `/jump 5` |
 | `/remove <pos>` | Remove a specific track from the queue | `/remove 3` |
 | `/clear` | Clear the entire queue (keeps current track playing) | `/clear` |
