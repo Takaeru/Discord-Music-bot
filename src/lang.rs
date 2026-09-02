@@ -23,6 +23,7 @@ pub struct Lang {
     pub cmd_seek: &'static str,
     pub cmd_lyrics: &'static str,
     pub cmd_filter: &'static str,
+    pub cmd_autoplay: &'static str,
 
     // === Command responses ===
     pub playback_paused: &'static str,
@@ -42,6 +43,9 @@ pub struct Lang {
     pub lyrics_footer: &'static str,     // has {}
     pub filter_set: &'static str,        // has {}
     pub filter_disabled: &'static str,
+    pub autoplay_enabled: &'static str,
+    pub autoplay_disabled: &'static str,
+    pub autoplay_requester: &'static str,
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -134,6 +138,7 @@ pub struct Lang {
     pub help_seek: &'static str,
     pub help_lyrics: &'static str,
     pub help_filter: &'static str,
+    pub help_autoplay: &'static str,
 
     // === Ping ===
     pub ping_title: &'static str,
@@ -195,6 +200,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_seek: "Seek to a specific time in the current track (e.g. 1:30 or 90)",
     cmd_lyrics: "Display lyrics for the current song or a search query",
     cmd_filter: "Apply an audio filter (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
+    cmd_autoplay: "Toggle automatic music recommendations when the queue ends",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -213,6 +219,9 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     lyrics_footer: "Powered by LRCLIB • Requested by {}",
     filter_set: "🎛️ Audio filter set to **{}**",
     filter_disabled: "➡️ Audio filter **disabled**.",
+    autoplay_enabled: "📻 Autoplay **enabled**! Bot will keep playing related songs when the queue ends.",
+    autoplay_disabled: "➡️ Autoplay **disabled**.",
+    autoplay_requester: "Autoplay 📻",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -300,6 +309,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_seek: "Seek to a specific timestamp in the current track",
     help_lyrics: "Show lyrics for the current song or specified title",
     help_filter: "Apply audio filters (bassboost, nightcore, etc.)",
+    help_autoplay: "Toggle autoplay (automatic related recommendations)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Bot Gateway Status",
@@ -353,6 +363,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_seek: "Lompat ke menit/detik tertentu pada lagu saat ini (contoh: 1:30 atau 90)",
     cmd_lyrics: "Tampilkan lirik lagu saat ini atau cari berdasarkan judul",
     cmd_filter: "Terapkan efek suara (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
+    cmd_autoplay: "Aktifkan atau matikan rekomendasi musik otomatis saat antrean habis",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -371,6 +382,9 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     lyrics_footer: "Didukung oleh LRCLIB • Diminta oleh {}",
     filter_set: "🎛️ Filter audio diatur ke **{}**",
     filter_disabled: "➡️ Filter audio **dinonaktifkan**.",
+    autoplay_enabled: "📻 Autoplay **diaktifkan**! Bot akan terus memutar lagu rekomendasi saat antrean habis.",
+    autoplay_disabled: "➡️ Autoplay **dinonaktifkan**.",
+    autoplay_requester: "Autoplay 📻",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -458,6 +472,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_seek: "Lompat ke menit/detik tertentu pada lagu yang sedang diputar",
     help_lyrics: "Tampilkan lirik untuk lagu saat ini atau lagu yang dicari",
     help_filter: "Terapkan efek suara (bassboost, nightcore, dll.)",
+    help_autoplay: "Atur mode autoplay (rekomendasi lagu otomatis)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Status Gateway Bot",

@@ -76,6 +76,9 @@ impl VoiceEventHandler for TrackEndHandler {
             );
 
             // Auto-update / send Now Playing message with control buttons
+            // Record played track into history for autoplay de-duplication
+            self.queue_mgr.push_history(self.guild_id, track.title.clone()).await;
+
             let queue = self.queue_mgr.get_queue(self.guild_id).await;
             let upcoming = queue.len().saturating_sub(1);
             let (embed, action_row) = build_now_playing_embed(&track, upcoming, mode, false);
@@ -96,29 +99,82 @@ impl VoiceEventHandler for TrackEndHandler {
                     self.queue_mgr.set_last_message_id(self.guild_id, new_msg.id).await;
                 }
             }
-        } else if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
-            if new_behavior() {
-                // new behavior: rewrite the last card into a "finished" message
-                if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+        } else {
+            // Queue is empty. Check if Autoplay is enabled!
+            if self.queue_mgr.get_autoplay(self.guild_id).await {
+                if let Some(last_track) = self.queue_mgr.get_current(self.guild_id).await {
+                    let history = self.queue_mgr.get_history(self.guild_id).await;
+                    if let Some(mut rec) = self.source_mgr.get_recommendation(&last_track, &history).await {
+                        rec.requester = Some(get_lang().autoplay_requester.to_string());
+                        self.queue_mgr.push_history(self.guild_id, rec.title.clone()).await;
+                        self.queue_mgr.push_track(self.guild_id, rec.clone()).await;
+
+                        if let Some(track) = self.queue_mgr.advance(self.guild_id).await {
+                            let mut handler = self.call_lock.lock().await;
+                            let filter = self.queue_mgr.get_filter(self.guild_id).await;
+                            let input = self
+                                .source_mgr
+                                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                                .await;
+                            let next_handle = handler.enqueue_input(input).await;
+                            let _ = next_handle.set_volume(0.8);
+
+                            self.queue_mgr.set_current_track(self.guild_id, track.clone()).await;
+
+                            let _ = next_handle.add_event(
+                                songbird::events::Event::Track(songbird::events::TrackEvent::End),
+                                TrackEndHandler {
+                                    guild_id: self.guild_id,
+                                    queue_mgr: self.queue_mgr.clone(),
+                                    source_mgr: self.source_mgr.clone(),
+                                    call_lock: self.call_lock.clone(),
+                                    http: self.http.clone(),
+                                },
+                            );
+
+                            let (embed, action_row) = build_now_playing_embed(&track, 0, mode, false);
+                            if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
+                                if new_behavior() {
+                                    if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                                        let _ = channel_id.delete_message(&self.http, old_msg_id).await;
+                                    }
+                                }
+                                let create_msg = CreateMessage::new().embed(embed).components(vec![action_row]);
+                                if let Ok(new_msg) = channel_id.send_message(&self.http, create_msg).await {
+                                    self.queue_mgr.set_last_message_id(self.guild_id, new_msg.id).await;
+                                }
+                            }
+
+                            return None;
+                        }
+                    }
+                }
+            }
+
+            if let Some(channel_id) = self.queue_mgr.get_text_channel(self.guild_id).await {
+                if new_behavior() {
+                    // new behavior: rewrite the last card into a "finished" message
+                    if let Some(old_msg_id) = self.queue_mgr.get_last_message_id(self.guild_id).await {
+                        let _ = channel_id
+                            .edit_message(
+                                &self.http,
+                                old_msg_id,
+                                EditMessage::new()
+                                    .content(get_lang().queue_finished_playing)
+                                    .embeds(vec![])
+                                    .components(vec![]),
+                            )
+                            .await;
+                    }
+                } else {
+                    // old behavior: post a separate "finished" message (channel history)
                     let _ = channel_id
-                        .edit_message(
+                        .send_message(
                             &self.http,
-                            old_msg_id,
-                            EditMessage::new()
-                                .content(get_lang().queue_finished_playing)
-                                .embeds(vec![])
-                                .components(vec![]),
+                            CreateMessage::new().content(get_lang().queue_finished_playing),
                         )
                         .await;
                 }
-            } else {
-                // old behavior: post a separate "finished" message (channel history)
-                let _ = channel_id
-                    .send_message(
-                        &self.http,
-                        CreateMessage::new().content(get_lang().queue_finished_playing),
-                    )
-                    .await;
             }
         }
 

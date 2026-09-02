@@ -16,9 +16,9 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_clear, handle_filter, handle_help, handle_jump, handle_leave, handle_music_component,
-    handle_pause, handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume,
-    handle_seek, handle_shuffle, handle_skip, handle_stop, handle_volume,
+    handle_autoplay, handle_clear, handle_filter, handle_help, handle_jump, handle_leave,
+    handle_music_component, handle_pause, handle_ping, handle_remove, handle_repeat, handle_replay,
+    handle_resume, handle_seek, handle_shuffle, handle_skip, handle_stop, handle_volume,
 };
 use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
@@ -151,6 +151,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 .add_string_choice("karaoke (vocal reduction)", "karaoke")
                 .required(true),
             ),
+        CreateCommand::new("autoplay")
+            .description(get_lang().cmd_autoplay)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "enable",
+                    "Enable or disable autoplay (optional, toggles if omitted)",
+                )
+                .required(false),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -184,6 +194,7 @@ pub async fn handle_command(
         "seek" => handle_seek(ctx, command, source_mgr, queue_mgr).await,
         "lyrics" => handle_lyrics(ctx, command, queue_mgr).await,
         "filter" => handle_filter(ctx, command, source_mgr, queue_mgr).await,
+        "autoplay" => handle_autoplay(ctx, command, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
@@ -304,6 +315,7 @@ async fn handle_search_play(
 
     let mut track = track;
     track.requester = Some(format!("<@{}>", component.user.id));
+    queue_mgr.push_history(guild_id, track.title.clone()).await;
     if is_play_next {
         queue_mgr.push_next(guild_id, track.clone()).await;
     } else {

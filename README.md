@@ -61,6 +61,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
 | `/filter <mode>` | Apply audio filter: `off`, `bassboost`, `nightcore`, `vaporwave`, `8d`, `karaoke` | `/filter mode:bassboost` |
+| `/autoplay [enable]` | Toggle automatic music recommendations when the queue ends | `/autoplay` or `/autoplay enable:true` |
 | `/stop` | Stop playback and clear the queue | `/stop` |
 | `/queue` | View current queue, platform sources, repeat mode, and total duration | `/queue` |
 | `/nowplaying` | Show details, platform source, thumbnail, and active loop mode | `/nowplaying` |

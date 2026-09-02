@@ -98,6 +98,8 @@ pub struct QueueManager {
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
     audio_filters: Arc<Mutex<HashMap<GuildId, AudioFilter>>>,
+    autoplay: Arc<Mutex<HashMap<GuildId, bool>>>,
+    history: Arc<Mutex<HashMap<GuildId, VecDeque<String>>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
@@ -116,6 +118,8 @@ impl QueueManager {
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
             audio_filters: Arc::new(Mutex::new(HashMap::new())),
+            autoplay: Arc::new(Mutex::new(HashMap::new())),
+            history: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
             search_results: Arc::new(Mutex::new(HashMap::new())),
@@ -416,6 +420,10 @@ impl QueueManager {
         sr_map.retain(|_, entry| entry.guild_id != guild_id);
         let mut af_map = self.audio_filters.lock().await;
         af_map.remove(&guild_id);
+        let mut ap_map = self.autoplay.lock().await;
+        ap_map.remove(&guild_id);
+        let mut hist_map = self.history.lock().await;
+        hist_map.remove(&guild_id);
     }
 
     pub async fn get_filter(&self, guild_id: GuildId) -> AudioFilter {
@@ -430,5 +438,39 @@ impl QueueManager {
         } else {
             filters.insert(guild_id, filter);
         }
+    }
+
+    pub async fn get_autoplay(&self, guild_id: GuildId) -> bool {
+        let map = self.autoplay.lock().await;
+        map.get(&guild_id).copied().unwrap_or(false)
+    }
+
+    pub async fn set_autoplay(&self, guild_id: GuildId, enabled: bool) {
+        let mut map = self.autoplay.lock().await;
+        map.insert(guild_id, enabled);
+    }
+
+    pub async fn toggle_autoplay(&self, guild_id: GuildId) -> bool {
+        let mut map = self.autoplay.lock().await;
+        let current = map.get(&guild_id).copied().unwrap_or(false);
+        let new_val = !current;
+        map.insert(guild_id, new_val);
+        new_val
+    }
+
+    pub async fn get_history(&self, guild_id: GuildId) -> Vec<String> {
+        let map = self.history.lock().await;
+        map.get(&guild_id)
+            .map(|dq| dq.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub async fn push_history(&self, guild_id: GuildId, identifier: String) {
+        let mut map = self.history.lock().await;
+        let dq = map.entry(guild_id).or_default();
+        if dq.len() >= 25 {
+            dq.pop_front();
+        }
+        dq.push_back(identifier);
     }
 }

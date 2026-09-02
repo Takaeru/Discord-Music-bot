@@ -667,6 +667,48 @@ pub async fn handle_filter(
     let _ = send_response(ctx, command, &response_msg, false).await;
 }
 
+pub async fn handle_autoplay(
+    ctx: &Context,
+    command: &CommandInteraction,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let explicit_enable = command
+        .data
+        .options
+        .iter()
+        .find(|opt| opt.name == "enable")
+        .and_then(|opt| match opt.value {
+            CommandDataOptionValue::Boolean(b) => Some(b),
+            _ => None,
+        });
+
+    let new_state = match explicit_enable {
+        Some(enabled) => {
+            queue_mgr.set_autoplay(guild_id, enabled).await;
+            enabled
+        }
+        None => queue_mgr.toggle_autoplay(guild_id).await,
+    };
+
+    let msg = if new_state {
+        get_lang().autoplay_enabled
+    } else {
+        get_lang().autoplay_disabled
+    };
+
+    let _ = send_response(ctx, command, msg, false).await;
+}
+
 pub async fn handle_ping(ctx: &Context, command: &CommandInteraction) {
     let embed = CreateEmbed::new()
         .title(get_lang().ping_title)
@@ -696,6 +738,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("🔀 `/shuffle`", get_lang().help_shuffle, true)
         .field("🔁 `/repeat <mode>`", get_lang().help_repeat, true)
         .field("🎛️ `/filter <mode>`", get_lang().help_filter, true)
+        .field("📻 `/autoplay [enable]`", get_lang().help_autoplay, true)
         .field("📋 `/queue` | 📻 `/nowplaying`", get_lang().help_queue_nowplaying, true)
         .field("🗑️ `/remove <pos>` | 🗑️ `/clear`", get_lang().help_remove_clear, true)
         .field("⏭️ `/jump <pos>`", get_lang().help_jump, true)

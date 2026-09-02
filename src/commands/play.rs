@@ -186,6 +186,7 @@ pub async fn handle_play(
     if resolved.len() == 1 {
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
+        queue_mgr.push_history(guild_id, track.title.clone()).await;
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -236,6 +237,9 @@ pub async fn handle_play(
         let first_track = resolved[0].clone();
 
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
+        for t in &resolved {
+            queue_mgr.push_history(guild_id, t.title.clone()).await;
+        }
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -486,6 +490,7 @@ pub async fn handle_playnext(
         let track = resolved[0].clone();
         // Use push_next instead of push_track
         queue_mgr.push_next(guild_id, track.clone()).await;
+        queue_mgr.push_history(guild_id, track.title.clone()).await;
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -536,6 +541,9 @@ pub async fn handle_playnext(
 
         // Insert all at position 1+ preserving order
         queue_mgr.push_next_playlist(guild_id, resolved.clone()).await;
+        for t in &resolved {
+            queue_mgr.push_history(guild_id, t.title.clone()).await;
+        }
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;

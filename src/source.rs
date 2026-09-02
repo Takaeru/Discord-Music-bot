@@ -557,4 +557,64 @@ impl SourceManager {
             _ => YoutubeDl::new(self.http_client.clone(), url.to_string()).into(),
         }
     }
+
+    pub fn extract_youtube_id(url: &str) -> Option<String> {
+        if let Some(pos) = url.find("watch?v=") {
+            let id_part = &url[pos + 8..];
+            let id = id_part.split('&').next()?.split('?').next()?;
+            if id.len() >= 11 {
+                return Some(id[..11].to_string());
+            }
+        } else if let Some(pos) = url.find("youtu.be/") {
+            let id_part = &url[pos + 9..];
+            let id = id_part.split('&').next()?.split('?').next()?;
+            if id.len() >= 11 {
+                return Some(id[..11].to_string());
+            }
+        }
+        None
+    }
+
+    pub async fn get_recommendation(
+        &self,
+        seed: &TrackMetadata,
+        history: &[String],
+    ) -> Option<TrackMetadata> {
+        let video_id = Self::extract_youtube_id(&seed.url)
+            .or_else(|| Self::extract_youtube_id(&seed.stream_url));
+
+        let mix_url = match video_id {
+            Some(ref id) => format!("https://www.youtube.com/watch?v={}&list=RD{}", id, id),
+            None => {
+                let clean_title = seed.title
+                    .replace("(Official Video)", "")
+                    .replace("[Official Video]", "")
+                    .replace("(Official Music Video)", "")
+                    .replace("[MV]", "");
+                match &seed.author {
+                    Some(author) => format!("ytsearch10:{} {}", author, clean_title.trim()),
+                    None => format!("ytsearch10:{}", clean_title.trim()),
+                }
+            }
+        };
+
+        info!("Fetching autoplay recommendations via: {}", mix_url);
+
+        let resolved = self.resolve_single_query(&mix_url).await.ok()?;
+
+        for track in resolved {
+            if track.title.eq_ignore_ascii_case(&seed.title) || track.url == seed.url {
+                continue;
+            }
+            let already_played = history.iter().any(|h| {
+                h.eq_ignore_ascii_case(&track.title)
+                    || (!track.url.is_empty() && h.eq_ignore_ascii_case(&track.url))
+            });
+            if !already_played {
+                return Some(track);
+            }
+        }
+
+        None
+    }
 }
