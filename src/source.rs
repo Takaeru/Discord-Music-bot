@@ -70,6 +70,16 @@ impl SourceManager {
         }
     }
 
+    /// Reads MAX_PLAYLIST_ITEMS (or MAX_PLAYLIST_TRACKS) from .env. Defaults to 50.
+    /// Set to 0 for unlimited.
+    pub fn get_max_playlist_limit() -> usize {
+        std::env::var("MAX_PLAYLIST_ITEMS")
+            .or_else(|_| std::env::var("MAX_PLAYLIST_TRACKS"))
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(50)
+    }
+
     /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
     pub async fn resolve(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
@@ -244,9 +254,11 @@ impl SourceManager {
                                     });
                                 }
                             } else {
-                                // Playlist or Album - extract ALL tracks without any hardcoded limit
+                                // Playlist or Album - extract tracks respecting MAX_PLAYLIST_ITEMS
                                 if let Some(track_list) = entity_obj.get("trackList").and_then(|t| t.as_array()) {
-                                    for track in track_list.iter() {
+                                    let max_items = Self::get_max_playlist_limit();
+                                    let limit = if max_items > 0 { max_items } else { usize::MAX };
+                                    for track in track_list.iter().take(limit) {
                                         let title = track.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let subtitle = track.get("subtitle").and_then(|t| t.as_str()).unwrap_or("").to_string();
                                         let duration = track.get("duration").and_then(|d| d.as_u64()).map(Duration::from_millis);
@@ -308,6 +320,8 @@ impl SourceManager {
 
         info!("Resolving query via yt-dlp: {}", search_target);
 
+        let max_items = Self::get_max_playlist_limit();
+
         let target_for_cmd = search_target.clone();
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(30),
@@ -321,8 +335,10 @@ impl SourceManager {
                 ]);
 
                 if has_playlist {
-                    // Unlimited playlist loading
                     cmd.arg("--flat-playlist");
+                    if max_items > 0 {
+                        cmd.args(["--playlist-items", &format!("1:{}", max_items)]);
+                    }
                 } else if is_url {
                     cmd.arg("--no-playlist");
                 } else {
@@ -351,19 +367,15 @@ impl SourceManager {
         let mut tracks = Vec::new();
 
         if let Some(entries) = parsed.entries {
-            if has_playlist || (is_url && parsed._type.as_deref() == Some("playlist")) {
-                // Return all tracks in playlist/mix without capping
-                for entry in entries.into_iter() {
-                    if let Some(track) = Self::parse_single_entry(entry, source_hint) {
-                        tracks.push(track);
-                    }
-                }
+            let limit = if (has_playlist || (is_url && parsed._type.as_deref() == Some("playlist"))) && max_items > 0 {
+                max_items
             } else {
-                // For search queries, return all candidates
-                for entry in entries.into_iter() {
-                    if let Some(track) = Self::parse_single_entry(entry, source_hint) {
-                        tracks.push(track);
-                    }
+                usize::MAX
+            };
+
+            for entry in entries.into_iter().take(limit) {
+                if let Some(track) = Self::parse_single_entry(entry, source_hint) {
+                    tracks.push(track);
                 }
             }
         } else {

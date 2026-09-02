@@ -105,7 +105,17 @@ LOG_LEVEL=INFO
 BOT_LANG=en
 
 # Now Playing behavior: old (default, history) or new (clean channel)
-NOW_PLAYING_BEHAVIOR=old
+NOW_PLAYING_BEHAVIOR=new
+
+# Max items to load from YouTube playlists, mixes (list=RD), radio, or Spotify (0 = unlimited)
+MAX_PLAYLIST_ITEMS=50
+
+# MongoDB Atlas (Personal playlist & history cloud storage)
+MONGO_USER=usermaybees
+MONGO_PASSWORD=your_password
+MONGO_HOST=cluster0.ezivhgd.mongodb.net
+MONGO_APP_NAME=Cluster0
+MONGO_DATABASE=discord_music_bot
 ```
 
 ### 3. Run with Docker
