@@ -56,6 +56,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/resume` | Resume playback of paused track | `/resume` |
 | `/skip` | Skip to the next track in queue | `/skip` |
 | `/replay` | Replay the current track from the beginning | `/replay` |
+| `/seek <time>` | Seek to a specific timestamp in the current track | `/seek time:1:30` or `/seek time:90` |
 | `/shuffle` | Toggle random / shuffle mode on or off | `/shuffle` |
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |

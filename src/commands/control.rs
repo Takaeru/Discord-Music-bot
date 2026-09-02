@@ -433,6 +433,134 @@ pub async fn handle_replay(
     }
 }
 
+fn parse_time_str(input: &str) -> Option<std::time::Duration> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    if let Ok(secs) = s.parse::<u64>() {
+        return Some(std::time::Duration::from_secs(secs));
+    }
+
+    if s.contains(':') {
+        let parts: Vec<&str> = s.split(':').collect();
+        match parts.len() {
+            2 => {
+                let m = parts[0].trim().parse::<u64>().ok()?;
+                let sec = parts[1].trim().parse::<u64>().ok()?;
+                if sec >= 60 {
+                    return None;
+                }
+                return Some(std::time::Duration::from_secs(m * 60 + sec));
+            }
+            3 => {
+                let h = parts[0].trim().parse::<u64>().ok()?;
+                let m = parts[1].trim().parse::<u64>().ok()?;
+                let sec = parts[2].trim().parse::<u64>().ok()?;
+                if m >= 60 || sec >= 60 {
+                    return None;
+                }
+                return Some(std::time::Duration::from_secs(h * 3600 + m * 60 + sec));
+            }
+            _ => return None,
+        }
+    }
+
+    let lower = s.to_lowercase();
+    if lower.ends_with('s') && !lower.contains('m') && !lower.contains('h') {
+        if let Ok(secs) = lower.trim_end_matches('s').trim().parse::<u64>() {
+            return Some(std::time::Duration::from_secs(secs));
+        }
+    }
+
+    None
+}
+
+pub async fn handle_seek(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let time_str = match command.data.options.iter().find(|opt| opt.name == "time") {
+        Some(opt) => match &opt.value {
+            CommandDataOptionValue::String(s) => s.trim(),
+            _ => "",
+        },
+        None => "",
+    };
+
+    let target_dur = match parse_time_str(time_str) {
+        Some(d) => d,
+        None => {
+            let _ = send_response(ctx, command, get_lang().invalid_time_format, true).await;
+            return;
+        }
+    };
+
+    if let Some(current) = queue_mgr.get_current(guild_id).await {
+        if let Some(max_dur) = current.duration {
+            if target_dur > max_dur {
+                let dur_formatted = crate::utils::embed::format_duration(Some(max_dur));
+                let msg = fmt(get_lang().seek_exceeds_duration, &[&dur_formatted]);
+                let _ = send_response(ctx, command, &msg, true).await;
+                return;
+            }
+        }
+
+        if let Err(e) = command.defer(&ctx.http).await {
+            error!("Failed to defer interaction: {:?}", e);
+            return;
+        }
+
+        let manager = songbird::get(ctx).await.unwrap();
+        if let Some(call_lock) = manager.get(guild_id) {
+            let mut handler = call_lock.lock().await;
+
+            // Arm skip_end latch so the old track's End event does not advance the queue
+            queue_mgr.set_skip_end(guild_id).await;
+            handler.queue().stop();
+
+            let input = source_mgr.create_input_at(&current.stream_url, Some(target_dur)).await;
+            let track_handle = handler.enqueue_input(input).await;
+            let _ = track_handle.set_volume(0.8);
+
+            let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+            if loop_mode == LoopMode::Track {
+                let _ = track_handle.enable_loop();
+            }
+
+            let _ = track_handle.add_event(
+                songbird::events::Event::Track(songbird::events::TrackEvent::End),
+                crate::commands::events::TrackEndHandler {
+                    guild_id,
+                    queue_mgr: queue_mgr.clone(),
+                    source_mgr: source_mgr.clone(),
+                    call_lock: call_lock.clone(),
+                    http: ctx.http.clone(),
+                },
+            );
+        }
+
+        let target_formatted = crate::utils::embed::format_duration(Some(target_dur));
+        let msg = fmt(get_lang().seek_success, &[&target_formatted]);
+        let _ = send_followup(ctx, command, &msg).await;
+    } else {
+        let _ = send_response(ctx, command, get_lang().nothing_playing, true).await;
+    }
+}
+
 pub async fn handle_ping(ctx: &Context, command: &CommandInteraction) {
     let embed = CreateEmbed::new()
         .title(get_lang().ping_title)
@@ -458,6 +586,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("⏭️ `/playnext <query>`", get_lang().help_playnext, false)
         .field("⏸️ `/pause` | ▶️ `/resume`", get_lang().help_pause_resume, true)
         .field("⏭️ `/skip` | 🔄 `/replay`", get_lang().help_skip_replay, true)
+        .field("⏩ `/seek <time>`", get_lang().help_seek, true)
         .field("🔀 `/shuffle`", get_lang().help_shuffle, true)
         .field("🔁 `/repeat <mode>`", get_lang().help_repeat, true)
         .field("📋 `/queue` | 📻 `/nowplaying`", get_lang().help_queue_nowplaying, true)

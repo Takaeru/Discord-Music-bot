@@ -473,15 +473,26 @@ impl SourceManager {
 
     /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.
     pub async fn create_input(&self, url: &str) -> Input {
+        self.create_input_at(url, None).await
+    }
+
+    /// Creates a Songbird audio Input starting at an optional timestamp (fast keyframe seeking via FFmpeg).
+    pub async fn create_input_at(&self, url: &str, start_time: Option<Duration>) -> Input {
         let stream_target = match self.extract_direct_stream(url).await {
             Ok(direct) => direct,
             Err(_) => url.to_string(),
         };
 
-        info!("Creating fast-loading 48kHz audio pipeline for: {}", url);
+        info!("Creating fast-loading 48kHz audio pipeline for: {} (seek: {:?})", url, start_time);
 
         let res = tokio::task::spawn_blocking(move || {
             let mut ffmpeg = std::process::Command::new("ffmpeg");
+
+            if let Some(dur) = start_time {
+                let secs = dur.as_secs_f64();
+                ffmpeg.args(["-ss", &secs.to_string()]);
+            }
+
             ffmpeg.args([
                 "-reconnect",
                 "1",
