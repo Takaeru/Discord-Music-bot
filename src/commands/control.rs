@@ -345,7 +345,10 @@ pub async fn handle_jump(
             queue_mgr.set_skip_end(guild_id).await;
             handler.queue().stop();
 
-            let input = source_mgr.create_input(&track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -405,7 +408,10 @@ pub async fn handle_replay(
             let mut handler = call_lock.lock().await;
             handler.queue().stop();
 
-            let input = source_mgr.create_input(&current.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&current.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -532,7 +538,14 @@ pub async fn handle_seek(
             queue_mgr.set_skip_end(guild_id).await;
             handler.queue().stop();
 
-            let input = source_mgr.create_input_at(&current.stream_url, Some(target_dur)).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(
+                    &current.stream_url,
+                    Some(target_dur),
+                    filter.ffmpeg_filter(),
+                )
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -559,6 +572,99 @@ pub async fn handle_seek(
     } else {
         let _ = send_response(ctx, command, get_lang().nothing_playing, true).await;
     }
+}
+
+pub async fn handle_filter(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = check_voice_channel(ctx, guild_id, command.user.id) {
+        let _ = send_response(ctx, command, msg, true).await;
+        return;
+    }
+
+    let mode_str = match command.data.options.iter().find(|opt| opt.name == "mode") {
+        Some(opt) => match &opt.value {
+            CommandDataOptionValue::String(s) => s.as_str(),
+            _ => "off",
+        },
+        None => "off",
+    };
+
+    let filter = crate::queue::AudioFilter::from_str(mode_str);
+    queue_mgr.set_filter(guild_id, filter).await;
+
+    let manager = songbird::get(ctx).await.unwrap();
+    if let Some(call_lock) = manager.get(guild_id) {
+        let mut handler = call_lock.lock().await;
+
+        if let Some(current_handle) = handler.queue().current() {
+            let current_pos = match current_handle.get_info().await {
+                Ok(info) => info.position,
+                Err(_) => std::time::Duration::from_secs(0),
+            };
+
+            if let Some(current_track) = queue_mgr.get_current(guild_id).await {
+                if let Err(e) = command.defer(&ctx.http).await {
+                    error!("Failed to defer interaction: {:?}", e);
+                    return;
+                }
+
+                queue_mgr.set_skip_end(guild_id).await;
+                handler.queue().stop();
+
+                let input = source_mgr
+                    .create_input_filtered(
+                        &current_track.stream_url,
+                        Some(current_pos),
+                        filter.ffmpeg_filter(),
+                    )
+                    .await;
+                let track_handle = handler.enqueue_input(input).await;
+                let _ = track_handle.set_volume(0.8);
+
+                let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+                if loop_mode == LoopMode::Track {
+                    let _ = track_handle.enable_loop();
+                }
+
+                let _ = track_handle.add_event(
+                    songbird::events::Event::Track(songbird::events::TrackEvent::End),
+                    crate::commands::events::TrackEndHandler {
+                        guild_id,
+                        queue_mgr: queue_mgr.clone(),
+                        source_mgr: source_mgr.clone(),
+                        call_lock: call_lock.clone(),
+                        http: ctx.http.clone(),
+                    },
+                );
+
+                let response_msg = if filter == crate::queue::AudioFilter::Off {
+                    get_lang().filter_disabled.to_string()
+                } else {
+                    let fname = filter.name();
+                    fmt(get_lang().filter_set, &[&fname])
+                };
+                let _ = send_followup(ctx, command, &response_msg).await;
+                return;
+            }
+        }
+    }
+
+    let response_msg = if filter == crate::queue::AudioFilter::Off {
+        get_lang().filter_disabled.to_string()
+    } else {
+        let fname = filter.name();
+        fmt(get_lang().filter_set, &[&fname])
+    };
+    let _ = send_response(ctx, command, &response_msg, false).await;
 }
 
 pub async fn handle_ping(ctx: &Context, command: &CommandInteraction) {
@@ -589,6 +695,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("⏩ `/seek <time>`", get_lang().help_seek, true)
         .field("🔀 `/shuffle`", get_lang().help_shuffle, true)
         .field("🔁 `/repeat <mode>`", get_lang().help_repeat, true)
+        .field("🎛️ `/filter <mode>`", get_lang().help_filter, true)
         .field("📋 `/queue` | 📻 `/nowplaying`", get_lang().help_queue_nowplaying, true)
         .field("🗑️ `/remove <pos>` | 🗑️ `/clear`", get_lang().help_remove_clear, true)
         .field("⏭️ `/jump <pos>`", get_lang().help_jump, true)

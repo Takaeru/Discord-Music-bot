@@ -60,6 +60,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/shuffle` | Toggle random / shuffle mode on or off | `/shuffle` |
 | `/repeat <mode>` | Set repeat mode: `off`, `track` (1 song), or `queue` (all songs) | `/repeat mode:track` or `/repeat mode:queue` |
 | `/loop <mode>` | Alias for `/repeat` | `/loop mode:queue` |
+| `/filter <mode>` | Apply audio filter: `off`, `bassboost`, `nightcore`, `vaporwave`, `8d`, `karaoke` | `/filter mode:bassboost` |
 | `/stop` | Stop playback and clear the queue | `/stop` |
 | `/queue` | View current queue, platform sources, repeat mode, and total duration | `/queue` |
 | `/nowplaying` | Show details, platform source, thumbnail, and active loop mode | `/nowplaying` |

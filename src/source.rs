@@ -472,18 +472,35 @@ impl SourceManager {
     }
 
     /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.
+    #[allow(dead_code)]
     pub async fn create_input(&self, url: &str) -> Input {
-        self.create_input_at(url, None).await
+        self.create_input_filtered(url, None, None).await
     }
 
     /// Creates a Songbird audio Input starting at an optional timestamp (fast keyframe seeking via FFmpeg).
+    #[allow(dead_code)]
     pub async fn create_input_at(&self, url: &str, start_time: Option<Duration>) -> Input {
+        self.create_input_filtered(url, start_time, None).await
+    }
+
+    /// Creates a Songbird audio Input with optional timestamp seeking and audio filter (FFmpeg -af).
+    pub async fn create_input_filtered(
+        &self,
+        url: &str,
+        start_time: Option<Duration>,
+        filter: Option<&str>,
+    ) -> Input {
         let stream_target = match self.extract_direct_stream(url).await {
             Ok(direct) => direct,
             Err(_) => url.to_string(),
         };
 
-        info!("Creating fast-loading 48kHz audio pipeline for: {} (seek: {:?})", url, start_time);
+        info!(
+            "Creating fast-loading 48kHz audio pipeline for: {} (seek: {:?}, filter: {:?})",
+            url, start_time, filter
+        );
+
+        let filter_owned = filter.map(|s| s.to_string());
 
         let res = tokio::task::spawn_blocking(move || {
             let mut ffmpeg = std::process::Command::new("ffmpeg");
@@ -508,6 +525,13 @@ impl SourceManager {
                 "-i",
                 &stream_target,
                 "-vn",
+            ]);
+
+            if let Some(ref f) = filter_owned {
+                ffmpeg.args(["-af", f]);
+            }
+
+            ffmpeg.args([
                 "-c:a",
                 "libopus",
                 "-b:a",

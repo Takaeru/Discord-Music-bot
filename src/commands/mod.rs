@@ -16,9 +16,9 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_clear, handle_help, handle_jump, handle_leave, handle_music_component, handle_pause,
-    handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume, handle_seek,
-    handle_shuffle, handle_skip, handle_stop, handle_volume,
+    handle_clear, handle_filter, handle_help, handle_jump, handle_leave, handle_music_component,
+    handle_pause, handle_ping, handle_remove, handle_repeat, handle_replay, handle_resume,
+    handle_seek, handle_shuffle, handle_skip, handle_stop, handle_volume,
 };
 use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
@@ -135,6 +135,22 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 )
                 .required(false),
             ),
+        CreateCommand::new("filter")
+            .description(get_lang().cmd_filter)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "mode",
+                    "Audio filter: off, bassboost, nightcore, vaporwave, 8d, or karaoke",
+                )
+                .add_string_choice("off (disable filter)", "off")
+                .add_string_choice("bassboost (deep bass)", "bassboost")
+                .add_string_choice("nightcore (high pitch & fast)", "nightcore")
+                .add_string_choice("vaporwave (slowed & relaxed)", "vaporwave")
+                .add_string_choice("8d (surround rotating audio)", "8d")
+                .add_string_choice("karaoke (vocal reduction)", "karaoke")
+                .required(true),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -167,6 +183,7 @@ pub async fn handle_command(
         "playnext" => handle_playnext(ctx, command, source_mgr, queue_mgr).await,
         "seek" => handle_seek(ctx, command, source_mgr, queue_mgr).await,
         "lyrics" => handle_lyrics(ctx, command, queue_mgr).await,
+        "filter" => handle_filter(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
@@ -295,7 +312,10 @@ async fn handle_search_play(
     queue_mgr.set_text_channel(guild_id, component.channel_id).await;
 
     if !is_currently_playing {
-        let input = source_mgr.create_input(&track.stream_url).await;
+        let filter = queue_mgr.get_filter(guild_id).await;
+        let input = source_mgr
+            .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+            .await;
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
 

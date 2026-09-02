@@ -380,8 +380,14 @@ pub async fn handle_queue_component(
                         // doesn't re-advance the rotated queue.
                         queue_mgr.set_skip_end(guild_id).await;
                         handler.queue().stop();
-
-                        let input = source_mgr.create_input(&target_track.stream_url).await;
+                        let filter = queue_mgr.get_filter(guild_id).await;
+                        let input = source_mgr
+                            .create_input_filtered(
+                                &target_track.stream_url,
+                                None,
+                                filter.ffmpeg_filter(),
+                            )
+                            .await;
                         let track_handle = handler.enqueue_input(input).await;
                         let _ = track_handle.set_volume(0.8);
 

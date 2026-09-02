@@ -45,12 +45,59 @@ impl LoopMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AudioFilter {
+    #[default]
+    Off,
+    Bassboost,
+    Nightcore,
+    Vaporwave,
+    EightD,
+    Karaoke,
+}
+
+impl AudioFilter {
+    pub fn ffmpeg_filter(&self) -> Option<&'static str> {
+        match self {
+            AudioFilter::Off => None,
+            AudioFilter::Bassboost => Some("bass=g=8,dynaudnorm=f=200"),
+            AudioFilter::Nightcore => Some("asetrate=48000*1.25,aresample=48000"),
+            AudioFilter::Vaporwave => Some("asetrate=48000*0.8,aresample=48000"),
+            AudioFilter::EightD => Some("apulsator=hz=0.125"),
+            AudioFilter::Karaoke => Some("stereotools=mlev=0.03125"),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            AudioFilter::Off => "Off",
+            AudioFilter::Bassboost => "Bass Boost 🔊",
+            AudioFilter::Nightcore => "Nightcore 🌙",
+            AudioFilter::Vaporwave => "Vaporwave 🌊",
+            AudioFilter::EightD => "8D Audio 🎧",
+            AudioFilter::Karaoke => "Karaoke 🎤",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "bassboost" | "bass" => AudioFilter::Bassboost,
+            "nightcore" | "nc" => AudioFilter::Nightcore,
+            "vaporwave" | "slowed" => AudioFilter::Vaporwave,
+            "8d" | "eightd" => AudioFilter::EightD,
+            "karaoke" => AudioFilter::Karaoke,
+            _ => AudioFilter::Off,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct QueueManager {
     queues: Arc<Mutex<HashMap<GuildId, VecDeque<TrackMetadata>>>>,
     current_track: Arc<Mutex<HashMap<GuildId, TrackMetadata>>>,
     loop_modes: Arc<Mutex<HashMap<GuildId, LoopMode>>>,
     shuffled: Arc<Mutex<HashMap<GuildId, bool>>>,
+    audio_filters: Arc<Mutex<HashMap<GuildId, AudioFilter>>>,
     text_channels: Arc<Mutex<HashMap<GuildId, ChannelId>>>,
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
@@ -68,6 +115,7 @@ impl QueueManager {
             skip_end: Arc::new(Mutex::new(HashMap::new())),
             loop_modes: Arc::new(Mutex::new(HashMap::new())),
             shuffled: Arc::new(Mutex::new(HashMap::new())),
+            audio_filters: Arc::new(Mutex::new(HashMap::new())),
             text_channels: Arc::new(Mutex::new(HashMap::new())),
             last_messages: Arc::new(Mutex::new(HashMap::new())),
             search_results: Arc::new(Mutex::new(HashMap::new())),
@@ -366,5 +414,21 @@ impl QueueManager {
         msg_map.remove(&guild_id);
         let mut sr_map = self.search_results.lock().await;
         sr_map.retain(|_, entry| entry.guild_id != guild_id);
+        let mut af_map = self.audio_filters.lock().await;
+        af_map.remove(&guild_id);
+    }
+
+    pub async fn get_filter(&self, guild_id: GuildId) -> AudioFilter {
+        let filters = self.audio_filters.lock().await;
+        filters.get(&guild_id).copied().unwrap_or_default()
+    }
+
+    pub async fn set_filter(&self, guild_id: GuildId, filter: AudioFilter) {
+        let mut filters = self.audio_filters.lock().await;
+        if filter == AudioFilter::Off {
+            filters.remove(&guild_id);
+        } else {
+            filters.insert(guild_id, filter);
+        }
     }
 }

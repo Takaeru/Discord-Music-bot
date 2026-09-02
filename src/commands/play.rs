@@ -188,7 +188,10 @@ pub async fn handle_play(
         queue_mgr.push_track(guild_id, track.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -235,7 +238,10 @@ pub async fn handle_play(
         queue_mgr.push_playlist(guild_id, resolved.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&first_track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -482,7 +488,10 @@ pub async fn handle_playnext(
         queue_mgr.push_next(guild_id, track.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
@@ -529,7 +538,10 @@ pub async fn handle_playnext(
         queue_mgr.push_next_playlist(guild_id, resolved.clone()).await;
 
         if !is_currently_playing {
-            let input = source_mgr.create_input(&first_track.stream_url).await;
+            let filter = queue_mgr.get_filter(guild_id).await;
+            let input = source_mgr
+                .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 

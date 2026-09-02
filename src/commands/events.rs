@@ -49,7 +49,11 @@ impl VoiceEventHandler for TrackEndHandler {
 
         if let Some(track) = next_track {
             let mut handler = self.call_lock.lock().await;
-            let input = self.source_mgr.create_input(&track.stream_url).await;
+            let filter = self.queue_mgr.get_filter(self.guild_id).await;
+            let input = self
+                .source_mgr
+                .create_input_filtered(&track.stream_url, None, filter.ffmpeg_filter())
+                .await;
             let next_handle = handler.enqueue_input(input).await;
             let _ = next_handle.set_volume(0.8);
 
