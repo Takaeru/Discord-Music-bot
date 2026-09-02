@@ -1148,19 +1148,27 @@ impl SourceManager {
             .unwrap_or((PlatformTarget::Any, None, String::new()));
         profile.requested_platform = platform_target;
 
-        // 1. If custom mood is provided, try AI mood curation first
+        // 1. If custom mood or query is provided:
+        // Use 100% pure live search queries directly from user input (NO LLM FAKE/INVENTED SONGS!)
         if let Some(_) = mood.filter(|s| !s.trim().is_empty()) {
             let effective_mood = if clean_mood.is_empty() { mood.unwrap() } else { &clean_mood };
+            let em_trimmed = effective_mood.trim();
+
+            // Real live search seeds directly to YouTube, Spotify, and SoundCloud
+            seeds.push(em_trimmed.to_string());
+            seeds.push(format!("{} hits", em_trimmed));
+            seeds.push(format!("{} popular songs", em_trimmed));
+            seeds.push(format!("{} music", em_trimmed));
+            seeds.push(format!("{} best tracks", em_trimmed));
+
             if self.ai_client.is_enabled() {
-                if let Ok(curation) = self.ai_client.curate_mood(effective_mood, history).await {
-                    profile.summary = format!("🎭 **Mood: \"{}\"**\n{}", effective_mood, curation.commentary);
-                    seeds = curation.query_seeds;
+                if let Ok(comment) = self.ai_client.comment_mood(em_trimmed).await {
+                    profile.summary = format!("{}\n\n🎭 **Mood / Query:** \"{}\"", comment, em_trimmed);
+                } else {
+                    profile.summary = format!("🎭 **Mood / Query:** \"{}\"", em_trimmed);
                 }
-            }
-            if seeds.is_empty() {
-                seeds.push(format!("{} songs", effective_mood.trim()));
-                seeds.push(format!("{} music", effective_mood.trim()));
-                profile.summary = format!("🎭 **Mood:** \"{}\"", effective_mood.trim());
+            } else {
+                profile.summary = format!("🎭 **Mood / Query:** \"{}\"", em_trimmed);
             }
         } else {
             // 2. No custom mood -> Use AI DJ taste commentary if enabled
@@ -1210,23 +1218,30 @@ impl SourceManager {
             }
         }
 
-        let is_dup = |cand: &TrackMetadata, existing_batch: &[TrackMetadata]| -> bool {
+        let is_candidate_valid = |cand: &TrackMetadata, existing_batch: &[TrackMetadata]| -> bool {
+            // Filter: duration must NOT exceed 10 minutes (600 seconds)
+            if let Some(dur) = cand.duration {
+                if dur.as_secs() > 600 {
+                    return false;
+                }
+            }
+
             let cand_yt_id = Self::extract_youtube_id(&cand.url)
                 .or_else(|| Self::extract_youtube_id(&cand.stream_url));
 
             // Check against history
             for h in history {
                 if h.title.eq_ignore_ascii_case(&cand.title) {
-                    return true;
+                    return false;
                 }
                 if !h.url.is_empty() && h.url == cand.url {
-                    return true;
+                    return false;
                 }
                 if let Some(ref cid) = cand_yt_id {
                     let h_yt_id = Self::extract_youtube_id(&h.url)
                         .or_else(|| Self::extract_youtube_id(&h.stream_url));
                     if h_yt_id.as_deref() == Some(cid.as_str()) {
-                        return true;
+                        return false;
                     }
                 }
             }
@@ -1234,14 +1249,14 @@ impl SourceManager {
             // Check against current recommendation batch
             for b in existing_batch {
                 if b.title.eq_ignore_ascii_case(&cand.title) {
-                    return true;
+                    return false;
                 }
                 if !b.url.is_empty() && b.url == cand.url {
-                    return true;
+                    return false;
                 }
             }
 
-            false
+            true
         };
 
         let mut results = Vec::new();
@@ -1297,7 +1312,7 @@ impl SourceManager {
             };
 
             for cand in candidate_list {
-                if !is_dup(&cand, &results) {
+                if is_candidate_valid(&cand, &results) {
                     results.push(cand);
                     if results.len() >= target_count {
                         break;

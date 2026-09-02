@@ -37,6 +37,7 @@ pub struct AiClient {
     api_key: String,
     model: String,
     base_url: Option<String>,
+    web_search_enabled: bool,
     trivia_cache: Cache<String, String>,
 }
 
@@ -64,10 +65,14 @@ impl AiClient {
             .ok()
             .filter(|s| !s.trim().is_empty());
 
+        let web_search_enabled = std::env::var("LLM_WEB_SEARCH")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+
         if !api_key.is_empty() {
             info!(
-                "AI DJ Client initialized: Provider={:?}, Model={}, BaseUrl={:?}",
-                provider, model, base_url
+                "AI DJ Client initialized: Provider={:?}, Model={}, WebSearch={}, BaseUrl={:?}",
+                provider, model, web_search_enabled, base_url
             );
         } else {
             info!("AI DJ Client: No LLM_API_KEY provided. Using local heuristic fallback.");
@@ -83,6 +88,7 @@ impl AiClient {
             api_key,
             model,
             base_url,
+            web_search_enabled,
             trivia_cache: Cache::builder()
                 .max_capacity(200)
                 .time_to_live(Duration::from_secs(24 * 3600))
@@ -102,11 +108,108 @@ impl AiClient {
 
         match self.provider {
             AiProvider::Gemini => self.call_gemini(system, prompt).await,
-            AiProvider::Claude => self.call_claude(system, prompt).await,
+            AiProvider::Claude => {
+                let enriched_prompt = self.enrich_with_web_search(prompt).await;
+                self.call_claude(system, &enriched_prompt).await
+            }
             AiProvider::OpenAi | AiProvider::OpenAiCompatible => {
-                self.call_openai_compatible(system, prompt).await
+                let enriched_prompt = self.enrich_with_web_search(prompt).await;
+                self.call_openai_compatible(system, &enriched_prompt).await
             }
         }
+    }
+
+    async fn enrich_with_web_search(&self, prompt: &str) -> String {
+        if !self.web_search_enabled {
+            return prompt.to_string();
+        }
+
+        if let Some(snippets) = self.search_web_duckduckgo(prompt).await {
+            format!(
+                "{}\n\n[Real-time Web Search Context]:\n{}\n(Use the real-time search context above to ensure accuracy)",
+                prompt, snippets
+            )
+        } else {
+            prompt.to_string()
+        }
+    }
+
+    /// Free, zero-token real-time web search fallback for non-Gemini providers (Claude, OpenAI, Grok, Qwen, etc.)
+    pub async fn search_web_duckduckgo(&self, query: &str) -> Option<String> {
+        let clean_q = query
+            .lines()
+            .next()
+            .unwrap_or(query)
+            .trim_start_matches("Song:")
+            .trim_start_matches("User requested vibe/mood:")
+            .trim_start_matches("User requested mood:")
+            .trim_matches('"')
+            .trim();
+
+        if clean_q.is_empty() {
+            return None;
+        }
+
+        let res = self
+            .http_client
+            .get("https://html.duckduckgo.com/html/")
+            .query(&[("q", clean_q)])
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            .send()
+            .await
+            .ok()?;
+
+        if !res.status().is_success() {
+            return None;
+        }
+
+        let html = res.text().await.ok()?;
+        let mut snippets = Vec::new();
+
+        for part in html.split("class=\"result__snippet\"") {
+            if let Some(start_tag) = part.find('>') {
+                let after_tag = &part[start_tag + 1..];
+                if let Some(end_tag) = after_tag.find("</a>") {
+                    let raw_snippet = &after_tag[..end_tag];
+                    let clean = Self::strip_html_tags(raw_snippet);
+                    if !clean.trim().is_empty() && clean.len() > 15 {
+                        snippets.push(format!("- {}", clean.trim()));
+                        if snippets.len() >= 3 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if snippets.is_empty() {
+            None
+        } else {
+            Some(snippets.join("\n"))
+        }
+    }
+
+    fn strip_html_tags(input: &str) -> String {
+        let mut output = String::with_capacity(input.len());
+        let mut in_tag = false;
+        for c in input.chars() {
+            if c == '<' {
+                in_tag = true;
+            } else if c == '>' {
+                in_tag = false;
+            } else if !in_tag {
+                output.push(c);
+            }
+        }
+        output
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
     }
 
     async fn call_gemini(&self, system: &str, prompt: &str) -> Result<String, String> {
@@ -115,7 +218,7 @@ impl AiClient {
             self.model, self.api_key
         );
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "system_instruction": {
                 "parts": [{ "text": system }]
             },
@@ -129,6 +232,13 @@ impl AiClient {
             }
         });
 
+        // Add Google Search grounding for Gemini if enabled
+        if self.web_search_enabled {
+            body["tools"] = serde_json::json!([
+                { "google_search": {} }
+            ]);
+        }
+
         let res = self
             .http_client
             .post(&endpoint)
@@ -136,6 +246,14 @@ impl AiClient {
             .send()
             .await
             .map_err(|e| format!("Gemini HTTP request error: {}", e))?;
+
+        // Graceful fallback retry without tools if Gemini returns error on tools
+        let res = if !res.status().is_success() && self.web_search_enabled {
+            body.as_object_mut().map(|m| m.remove("tools"));
+            self.http_client.post(&endpoint).json(&body).send().await.unwrap_or(res)
+        } else {
+            res
+        };
 
         if !res.status().is_success() {
             let status = res.status();
@@ -334,17 +452,19 @@ impl AiClient {
              User memberikan deskripsi suasana/mood musik yang mereka inginkan. \
              Tugasmu adalah memberikan respon JSON dengan format: \
              {\n  \"commentary\": \"Kalimat pendek 1-2 kalimat ala penyiar radio yang menyambut mood user\",\n  \"query_seeds\": [\"Title 1 - Artist 1\", \"Title 2 - Artist 2\", \"Title 3 - Artist 3\", \"Title 4 - Artist 4\", \"Title 5 - Artist 5\"]\n}\n \
-             PENTING: Hanya keluarkan format JSON murni tanpa markdown kode block (```)."
+             PENTING: Hanya keluarkan format JSON murni tanpa markdown kode block (```). \
+             Pastikan hanya memilih lagu standar individual dengan durasi normal di bawah 10 menit (JANGAN pilih kompilasi album penuh, mix 1 jam, atau extended loop)."
         } else {
             "You are a professional AI Music Director & Radio DJ. \
              The user provides an abstract mood, vibe, or musical prompt. \
              Your job is to return a pure JSON object in this exact schema: \
              {\n  \"commentary\": \"A 1-2 sentence charismatic DJ line introducing the vibe\",\n  \"query_seeds\": [\"Title 1 - Artist 1\", \"Title 2 - Artist 2\", \"Title 3 - Artist 3\", \"Title 4 - Artist 4\", \"Title 5 - Artist 5\"]\n}\n \
-             IMPORTANT: Output pure valid JSON without markdown code fences."
+             IMPORTANT: Output pure valid JSON without markdown code fences. \
+             Ensure you only select individual standalone songs under 10 minutes in duration (DO NOT pick full album compilations, 1-hour mixes, or extended loops)."
         };
 
         let prompt = format!(
-            "User requested mood: \"{}\"\nRecent server history for flavor reference:\n{}\n\nPick 5 real, popular, fitting songs matching this mood.",
+            "User requested mood: \"{}\"\nRecent server history for flavor reference:\n{}\n\nPick 5 real, popular, fitting standalone songs matching this mood (duration strictly under 10 minutes, no full albums or long mixes).",
             mood,
             recent.join("\n")
         );
@@ -376,6 +496,25 @@ impl AiClient {
             commentary: format!("🎙️ **DJ:** Meracik lagu spesial untuk mood: \"{}\"!", mood),
             query_seeds: if lines.is_empty() { vec![mood.to_string()] } else { lines },
         })
+    }
+
+    /// Generates a quick charismatic DJ intro welcoming the user's mood without generating fake song seeds
+    pub async fn comment_mood(&self, mood: &str) -> Result<String, String> {
+        let is_id = crate::lang::is_id();
+        let system = if is_id {
+            "Kamu adalah penyiar radio musik (Radio DJ) di Discord yang gaul, santai, dan karismatik. \
+             User sedang mencari rekomendasi lagu dengan mood atau kata kunci tertentu. \
+             Berikan 1-2 kalimat sapaan DJ yang seru dan bersemangat menyambut pilihan mood user tersebut. \
+             Awali dengan '🎙️ **DJ:** '."
+        } else {
+            "You are a charismatic, energetic Discord Radio DJ. \
+             The user is searching for music recommendations for a specific mood or prompt. \
+             Give a fun, 1-2 sentence DJ intro welcoming this vibe. \
+             Start with '🎙️ **DJ:** '."
+        };
+
+        let prompt = format!("User requested vibe/mood: \"{}\"", mood);
+        self.generate_text(system, &prompt).await
     }
 
     /// Fetches an engaging 1-sentence trivia fact about a song
