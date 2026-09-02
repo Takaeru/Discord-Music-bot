@@ -1,3 +1,4 @@
+use moka::future::Cache;
 use serde::Deserialize;
 use songbird::input::{Input, YoutubeDl};
 use std::process::Command;
@@ -42,6 +43,8 @@ struct SpotifyTrackInfo {
 
 pub struct SourceManager {
     http_client: reqwest::Client,
+    query_cache: Cache<String, Vec<TrackMetadata>>,
+    stream_cache: Cache<String, String>,
 }
 
 impl SourceManager {
@@ -56,6 +59,14 @@ impl SourceManager {
                 .connect_timeout(Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
+            query_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(12 * 3600))
+                .build(),
+            stream_cache: Cache::builder()
+                .max_capacity(300)
+                .time_to_live(Duration::from_secs(3 * 3600))
+                .build(),
         }
     }
 
@@ -290,8 +301,14 @@ impl SourceManager {
             format!("ytsearch10:{}", query)
         };
 
+        if let Some(cached) = self.query_cache.get(&search_target).await {
+            info!("Query cache HIT for: {}", search_target);
+            return Ok(cached);
+        }
+
         info!("Resolving query via yt-dlp: {}", search_target);
 
+        let target_for_cmd = search_target.clone();
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             tokio::task::spawn_blocking(move || {
@@ -312,7 +329,7 @@ impl SourceManager {
                     cmd.arg("--flat-playlist");
                 }
 
-                cmd.arg(&search_target);
+                cmd.arg(&target_for_cmd);
                 cmd.output()
             }),
         )
@@ -358,6 +375,8 @@ impl SourceManager {
         if tracks.is_empty() {
             return Err("No tracks found for the requested query.".to_string());
         }
+
+        self.query_cache.insert(search_target, tracks.clone()).await;
 
         Ok(tracks)
     }
@@ -407,6 +426,11 @@ impl SourceManager {
     /// Extracts a direct progressive media stream URL (Opus in WebM or MP3) to avoid AAC ADTS errors.
     #[allow(dead_code)]
     pub async fn extract_direct_stream(&self, url: &str) -> Result<String, String> {
+        if let Some(cached) = self.stream_cache.get(url).await {
+            info!("Stream cache HIT for direct audio URL: {}", url);
+            return Ok(cached);
+        }
+
         let target = url.to_string();
         let task = tokio::task::spawn_blocking(move || {
             let output = Command::new("yt-dlp")
@@ -438,10 +462,13 @@ impl SourceManager {
         });
 
         // 20s cap — with retries 3 × socket-timeout 15s worst case would otherwise be 90s+
-        match tokio::time::timeout(std::time::Duration::from_secs(20), task).await {
-            Ok(join) => join.map_err(|e| format!("Task join error: {}", e))?,
-            Err(_) => Err("Stream URL resolution timed out after 20s".to_string()),
-        }
+        let direct = match tokio::time::timeout(std::time::Duration::from_secs(20), task).await {
+            Ok(join) => join.map_err(|e| format!("Task join error: {}", e))??,
+            Err(_) => return Err("Stream URL resolution timed out after 20s".to_string()),
+        };
+
+        self.stream_cache.insert(url.to_string(), direct.clone()).await;
+        Ok(direct)
     }
 
     /// Creates a Songbird audio Input with exact 48,000 Hz Stereo Opus resampling, 96kbps fast-loading & anti-jitter pipeline.
