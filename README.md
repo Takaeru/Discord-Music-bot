@@ -69,6 +69,11 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/jump <pos>` | Jump to a specific position in the queue | `/jump 5` |
 | `/remove <pos>` | Remove a specific track from the queue | `/remove 3` |
 | `/clear` | Clear the entire queue (keeps current track playing) | `/clear` |
+| `/playlist save <name>` | Save current music queue as a personal playlist | `/playlist save name:My Favorites` |
+| `/playlist load <name>` | Load a saved personal playlist into the queue | `/playlist load name:My Favorites` |
+| `/playlist list` | List all your saved personal playlists | `/playlist list` |
+| `/playlist show <name>` | Inspect tracks inside a saved personal playlist | `/playlist show name:My Favorites` |
+| `/playlist delete <name>` | Delete a saved personal playlist | `/playlist delete name:My Favorites` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/ping` | Show bot latency | `/ping` |

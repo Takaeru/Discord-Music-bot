@@ -17,6 +17,8 @@ reqwest = { version = "0.12", features = ["json"] }
 openssl = { version = "0.10", optional = true }
 rand = "0.8"
 moka = { version = "0.12", features = ["future"] }
+mongodb = "3.2"
+percent-encoding = "2.3"
 
 [features]
 vendored-openssl = ["openssl/vendored"]

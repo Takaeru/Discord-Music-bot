@@ -1,6 +1,7 @@
 mod commands;
 mod handler;
 mod lang;
+pub mod playlist;
 mod queue;
 mod source;
 mod utils;
@@ -40,10 +41,12 @@ async fn main() {
 
     let source_mgr = Arc::new(SourceManager::new());
     let queue_mgr = Arc::new(QueueManager::new());
+    let playlist_store = Arc::new(playlist::PlaylistStore::init().await);
 
     let handler = Handler {
         source_mgr,
         queue_mgr,
+        playlist_store,
     };
 
     let songbird_config = songbird::Config::default().preallocated_tracks(4);

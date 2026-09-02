@@ -745,6 +745,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("🔊 `/volume <0-100>`", get_lang().help_volume, true)
         .field("⏹️ `/stop` | 👋 `/leave`", get_lang().help_stop_leave, true)
         .field("📝 `/lyrics [query]`", get_lang().help_lyrics, true)
+        .field("📑 `/playlist <cmd>`", get_lang().help_playlist, true)
         .field("🏓 `/ping`", get_lang().help_ping, true)
         .color(Color::from_rgb(88, 101, 242));
 

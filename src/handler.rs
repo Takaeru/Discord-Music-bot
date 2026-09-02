@@ -5,12 +5,14 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::commands::{handle_command, handle_component, register_commands};
+use crate::playlist::PlaylistStore;
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
 
 pub struct Handler {
     pub source_mgr: Arc<SourceManager>,
     pub queue_mgr: Arc<QueueManager>,
+    pub playlist_store: Arc<PlaylistStore>,
 }
 
 #[async_trait]
@@ -37,7 +39,14 @@ impl EventHandler for Handler {
         match interaction {
             Interaction::Command(command) => {
                 info!("Handling slash command: /{}", command.data.name);
-                handle_command(&ctx, &command, &self.source_mgr, &self.queue_mgr).await;
+                handle_command(
+                    &ctx,
+                    &command,
+                    &self.source_mgr,
+                    &self.queue_mgr,
+                    &self.playlist_store,
+                )
+                .await;
             }
             Interaction::Component(component) => {
                 info!("Handling component interaction: {}", component.data.custom_id);

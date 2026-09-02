@@ -1,11 +1,11 @@
 use moka::future::Cache;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use songbird::input::{Input, YoutubeDl};
 use std::process::Command;
 use std::time::Duration;
 use tracing::{error, info};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackMetadata {
     pub title: String,
     pub url: String,

@@ -24,6 +24,7 @@ pub struct Lang {
     pub cmd_lyrics: &'static str,
     pub cmd_filter: &'static str,
     pub cmd_autoplay: &'static str,
+    pub cmd_playlist: &'static str,
 
     // === Command responses ===
     pub playback_paused: &'static str,
@@ -46,6 +47,16 @@ pub struct Lang {
     pub autoplay_enabled: &'static str,
     pub autoplay_disabled: &'static str,
     pub autoplay_requester: &'static str,
+    pub playlist_saved: &'static str,       // has {} {}
+    pub playlist_loaded: &'static str,      // has {} {}
+    pub playlist_deleted: &'static str,     // has {}
+    pub playlist_not_found: &'static str,   // has {}
+    pub playlist_empty_queue: &'static str,
+    pub playlist_list_title: &'static str,
+    pub playlist_list_empty: &'static str,
+    pub playlist_show_title: &'static str,  // has {}
+    pub playlist_storage_cloud: &'static str,
+    pub playlist_storage_local: &'static str,
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -139,6 +150,7 @@ pub struct Lang {
     pub help_lyrics: &'static str,
     pub help_filter: &'static str,
     pub help_autoplay: &'static str,
+    pub help_playlist: &'static str,
 
     // === Ping ===
     pub ping_title: &'static str,
@@ -201,6 +213,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_lyrics: "Display lyrics for the current song or a search query",
     cmd_filter: "Apply an audio filter (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
     cmd_autoplay: "Toggle automatic music recommendations when the queue ends",
+    cmd_playlist: "Manage personal saved music playlists (save, load, list, show, delete)",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -222,6 +235,16 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     autoplay_enabled: "📻 Autoplay **enabled**! Bot will keep playing related songs when the queue ends.",
     autoplay_disabled: "➡️ Autoplay **disabled**.",
     autoplay_requester: "Autoplay 📻",
+    playlist_saved: "💾 Saved **{}** tracks to playlist **{}**!",
+    playlist_loaded: "📂 Loaded **{}** tracks from playlist **{}** into the queue!",
+    playlist_deleted: "🗑️ Playlist **{}** has been deleted.",
+    playlist_not_found: "⚠️ Playlist **{}** was not found.",
+    playlist_empty_queue: "⚠️ The current queue is empty. Nothing to save!",
+    playlist_list_title: "📋 Your Saved Playlists",
+    playlist_list_empty: "ℹ️ You don't have any saved playlists yet. Use `/playlist save <name>` to save your current queue!",
+    playlist_show_title: "📋 Playlist: {}",
+    playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
+    playlist_storage_local: "💾 Local File",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -310,6 +333,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_lyrics: "Show lyrics for the current song or specified title",
     help_filter: "Apply audio filters (bassboost, nightcore, etc.)",
     help_autoplay: "Toggle autoplay (automatic related recommendations)",
+    help_playlist: "Save, load, list, show, or delete personal playlists",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Bot Gateway Status",
@@ -364,6 +388,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_lyrics: "Tampilkan lirik lagu saat ini atau cari berdasarkan judul",
     cmd_filter: "Terapkan efek suara (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
     cmd_autoplay: "Aktifkan atau matikan rekomendasi musik otomatis saat antrean habis",
+    cmd_playlist: "Kelola playlist musik pribadi (save, load, list, show, delete)",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -385,6 +410,16 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     autoplay_enabled: "📻 Autoplay **diaktifkan**! Bot akan terus memutar lagu rekomendasi saat antrean habis.",
     autoplay_disabled: "➡️ Autoplay **dinonaktifkan**.",
     autoplay_requester: "Autoplay 📻",
+    playlist_saved: "💾 Berhasil menyimpan **{}** lagu ke playlist **{}**!",
+    playlist_loaded: "📂 Berhasil memuat **{}** lagu dari playlist **{}** ke dalam antrean!",
+    playlist_deleted: "🗑️ Playlist **{}** berhasil dihapus.",
+    playlist_not_found: "⚠️ Playlist **{}** tidak ditemukan.",
+    playlist_empty_queue: "⚠️ Antrean musik saat ini kosong. Tidak ada lagu untuk disimpan!",
+    playlist_list_title: "📋 Daftar Playlist Tersimpan Kamu",
+    playlist_list_empty: "ℹ️ Kamu belum memiliki playlist tersimpan. Gunakan `/playlist save <nama>` untuk menyimpan antrean saat ini!",
+    playlist_show_title: "📋 Playlist: {}",
+    playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
+    playlist_storage_local: "💾 File Lokal",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -473,6 +508,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_lyrics: "Tampilkan lirik untuk lagu saat ini atau lagu yang dicari",
     help_filter: "Terapkan efek suara (bassboost, nightcore, dll.)",
     help_autoplay: "Atur mode autoplay (rekomendasi lagu otomatis)",
+    help_playlist: "Simpan, muat, lihat, atau hapus playlist pribadi",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Status Gateway Bot",

@@ -2,6 +2,7 @@ pub mod control;
 pub mod events;
 pub mod lyrics;
 pub mod play;
+pub mod playlist;
 pub mod queue;
 
 use serenity::all::{
@@ -11,6 +12,7 @@ use serenity::all::{
 use std::sync::Arc;
 
 use crate::lang::get_lang;
+use crate::playlist::PlaylistStore;
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
 use crate::utils::response::send_response;
@@ -22,6 +24,7 @@ use self::control::{
 };
 use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
+use self::playlist::handle_playlist;
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
 pub fn register_commands() -> Vec<CreateCommand> {
@@ -161,6 +164,75 @@ pub fn register_commands() -> Vec<CreateCommand> {
                 )
                 .required(false),
             ),
+        CreateCommand::new("playlist")
+            .description(get_lang().cmd_playlist)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "save",
+                    "Save current music queue as a personal playlist",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "name",
+                        "Name of the playlist to save",
+                    )
+                    .required(true),
+                ),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "load",
+                    "Load a saved personal playlist into queue",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "name",
+                        "Name of the playlist to load",
+                    )
+                    .required(true),
+                ),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "list",
+                    "List all your saved personal playlists",
+                ),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "show",
+                    "Show tracks in a personal playlist",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "name",
+                        "Name of the playlist to inspect",
+                    )
+                    .required(true),
+                ),
+            )
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "delete",
+                    "Delete a saved personal playlist",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "name",
+                        "Name of the playlist to delete",
+                    )
+                    .required(true),
+                ),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -172,6 +244,7 @@ pub async fn handle_command(
     command: &CommandInteraction,
     source_mgr: &Arc<SourceManager>,
     queue_mgr: &Arc<QueueManager>,
+    playlist_store: &Arc<PlaylistStore>,
 ) {
     let cmd_name = command.data.name.as_str();
 
@@ -195,6 +268,7 @@ pub async fn handle_command(
         "lyrics" => handle_lyrics(ctx, command, queue_mgr).await,
         "filter" => handle_filter(ctx, command, source_mgr, queue_mgr).await,
         "autoplay" => handle_autoplay(ctx, command, queue_mgr).await,
+        "playlist" => handle_playlist(ctx, command, source_mgr, queue_mgr, playlist_store).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
