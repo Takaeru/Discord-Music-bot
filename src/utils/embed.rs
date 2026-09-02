@@ -42,6 +42,15 @@ pub fn source_color(source: &str) -> Color {
     }
 }
 
+pub fn truncate(s: &str, max_len: usize) -> String {
+    if s.chars().count() > max_len {
+        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn format_duration(dur: Option<Duration>) -> String {
     match dur {
         Some(d) => {

@@ -18,9 +18,10 @@ use crate::source::SourceManager;
 use crate::utils::response::send_response;
 
 use self::control::{
-    handle_autoplay, handle_clear, handle_filter, handle_help, handle_jump, handle_leave,
-    handle_music_component, handle_pause, handle_ping, handle_remove, handle_repeat, handle_replay,
-    handle_resume, handle_seek, handle_shuffle, handle_skip, handle_stop, handle_volume,
+    handle_autoplay, handle_clear, handle_filter, handle_help, handle_history, handle_jump,
+    handle_leave, handle_music_component, handle_pause, handle_ping, handle_remove, handle_repeat,
+    handle_replay, handle_resume, handle_seek, handle_shuffle, handle_skip, handle_stop,
+    handle_volume,
 };
 use self::lyrics::handle_lyrics;
 use self::play::{handle_play, handle_playnext};
@@ -233,6 +234,16 @@ pub fn register_commands() -> Vec<CreateCommand> {
                     .required(true),
                 ),
             ),
+        CreateCommand::new("history")
+            .description(get_lang().cmd_history)
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "clear",
+                    "Clear the playback history log (optional)",
+                )
+                .required(false),
+            ),
         CreateCommand::new("leave").description(get_lang().cmd_leave),
         CreateCommand::new("ping").description(get_lang().cmd_ping),
         CreateCommand::new("help").description(get_lang().cmd_help),
@@ -269,6 +280,7 @@ pub async fn handle_command(
         "filter" => handle_filter(ctx, command, source_mgr, queue_mgr).await,
         "autoplay" => handle_autoplay(ctx, command, queue_mgr).await,
         "playlist" => handle_playlist(ctx, command, source_mgr, queue_mgr, playlist_store).await,
+        "history" => handle_history(ctx, command, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
         "ping" => handle_ping(ctx, command).await,
         "help" => handle_help(ctx, command).await,
@@ -389,7 +401,7 @@ async fn handle_search_play(
 
     let mut track = track;
     track.requester = Some(format!("<@{}>", component.user.id));
-    queue_mgr.push_history(guild_id, track.title.clone()).await;
+    queue_mgr.push_history(guild_id, track.clone()).await;
     if is_play_next {
         queue_mgr.push_next(guild_id, track.clone()).await;
     } else {
@@ -404,6 +416,9 @@ async fn handle_search_play(
             .await;
         let track_handle = handler.enqueue_input(input).await;
         let _ = track_handle.set_volume(0.8);
+
+        // Mark as current track so now-playing and autoplay can reference it
+        queue_mgr.set_current_track(guild_id, track.clone()).await;
 
         if loop_mode == LoopMode::Track {
             let _ = track_handle.enable_loop();

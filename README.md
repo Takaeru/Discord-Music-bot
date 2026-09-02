@@ -74,6 +74,7 @@ Supports Discord's **DAVE (End-to-End Encrypted Voice)** protocol natively with 
 | `/playlist list` | List all your saved personal playlists | `/playlist list` |
 | `/playlist show <name>` | Inspect tracks inside a saved personal playlist | `/playlist show name:My Favorites` |
 | `/playlist delete <name>` | Delete a saved personal playlist | `/playlist delete name:My Favorites` |
+| `/history [clear]` | View server playback history log (used by Autoplay) or clear it | `/history` or `/history clear:true` |
 | `/volume <0-100>` | Adjust audio playback volume | `/volume 80` |
 | `/leave` | Disconnect bot from the voice channel | `/leave` |
 | `/ping` | Show bot latency | `/ping` |

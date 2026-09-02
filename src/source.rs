@@ -578,40 +578,77 @@ impl SourceManager {
     pub async fn get_recommendation(
         &self,
         seed: &TrackMetadata,
-        history: &[String],
+        history: &[TrackMetadata],
     ) -> Option<TrackMetadata> {
         let video_id = Self::extract_youtube_id(&seed.url)
             .or_else(|| Self::extract_youtube_id(&seed.stream_url));
 
-        let mix_url = match video_id {
-            Some(ref id) => format!("https://www.youtube.com/watch?v={}&list=RD{}", id, id),
-            None => {
-                let clean_title = seed.title
-                    .replace("(Official Video)", "")
-                    .replace("[Official Video]", "")
-                    .replace("(Official Music Video)", "")
-                    .replace("[MV]", "");
-                match &seed.author {
-                    Some(author) => format!("ytsearch10:{} {}", author, clean_title.trim()),
-                    None => format!("ytsearch10:{}", clean_title.trim()),
+        let clean_title = seed
+            .title
+            .replace("(Official Video)", "")
+            .replace("[Official Video]", "")
+            .replace("(Official Music Video)", "")
+            .replace("[Official Music Video]", "")
+            .replace("(Lyric Video)", "")
+            .replace("[Lyric Video]", "")
+            .replace("(MV)", "")
+            .replace("[MV]", "")
+            .replace("【MV】", "");
+
+        let is_duplicate = |cand: &TrackMetadata| -> bool {
+            if cand.title.eq_ignore_ascii_case(&seed.title) || cand.url == seed.url {
+                return true;
+            }
+            let cand_yt_id = Self::extract_youtube_id(&cand.url)
+                .or_else(|| Self::extract_youtube_id(&cand.stream_url));
+
+            history.iter().any(|h| {
+                if h.title.eq_ignore_ascii_case(&cand.title) {
+                    return true;
                 }
+                if !h.url.is_empty() && h.url == cand.url {
+                    return true;
+                }
+                if let Some(ref cid) = cand_yt_id {
+                    let h_yt_id = Self::extract_youtube_id(&h.url)
+                        .or_else(|| Self::extract_youtube_id(&h.stream_url));
+                    if h_yt_id.as_deref() == Some(cid.as_str()) {
+                        return true;
+                    }
+                }
+                false
+            })
+        };
+
+        // 1. Primary: YouTube Mix Playlist
+        if let Some(ref id) = video_id {
+            let mix_url = format!("https://www.youtube.com/watch?v={}&list=RD{}", id, id);
+            info!("Attempting autoplay via YouTube Mix: {}", mix_url);
+            if let Ok(resolved) = self.resolve_single_query(&mix_url).await {
+                for track in resolved {
+                    if !is_duplicate(&track) {
+                        return Some(track);
+                    }
+                }
+            }
+        }
+
+        // 2. Secondary Fallback: YouTube Search
+        let search_query = match &seed.author {
+            Some(author) if !author.is_empty() && author != "YouTube" => {
+                format!("ytsearch15:{} songs", author.trim())
+            }
+            _ => {
+                format!("ytsearch15:{} songs", clean_title.trim())
             }
         };
 
-        info!("Fetching autoplay recommendations via: {}", mix_url);
-
-        let resolved = self.resolve_single_query(&mix_url).await.ok()?;
-
-        for track in resolved {
-            if track.title.eq_ignore_ascii_case(&seed.title) || track.url == seed.url {
-                continue;
-            }
-            let already_played = history.iter().any(|h| {
-                h.eq_ignore_ascii_case(&track.title)
-                    || (!track.url.is_empty() && h.eq_ignore_ascii_case(&track.url))
-            });
-            if !already_played {
-                return Some(track);
+        info!("Attempting autoplay via YouTube Search fallback: {}", search_query);
+        if let Ok(resolved) = self.resolve_single_query(&search_query).await {
+            for track in resolved {
+                if !is_duplicate(&track) {
+                    return Some(track);
+                }
             }
         }
 

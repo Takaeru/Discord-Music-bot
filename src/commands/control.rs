@@ -7,7 +7,7 @@ use tracing::error;
 
 use crate::lang::{fmt, get_lang};
 use crate::queue::{LoopMode, QueueManager};
-use crate::utils::embed::build_now_playing_embed;
+use crate::utils::embed::{build_now_playing_embed, format_duration, truncate};
 use crate::utils::response::{send_followup, send_response};
 use crate::utils::voice::check_voice_channel;
 
@@ -746,6 +746,7 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction) {
         .field("⏹️ `/stop` | 👋 `/leave`", get_lang().help_stop_leave, true)
         .field("📝 `/lyrics [query]`", get_lang().help_lyrics, true)
         .field("📑 `/playlist <cmd>`", get_lang().help_playlist, true)
+        .field("📜 `/history [clear]`", get_lang().help_history, true)
         .field("🏓 `/ping`", get_lang().help_ping, true)
         .color(Color::from_rgb(88, 101, 242));
 
@@ -928,4 +929,81 @@ pub async fn handle_music_component(
         }
         _ => {}
     }
+}
+
+pub async fn handle_history(
+    ctx: &Context,
+    command: &CommandInteraction,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match command.guild_id {
+        Some(id) => id,
+        None => {
+            let _ = send_response(ctx, command, get_lang().server_only, true).await;
+            return;
+        }
+    };
+
+    let should_clear = command
+        .data
+        .options
+        .iter()
+        .any(|opt| opt.name == "clear" && opt.value.as_bool().unwrap_or(false));
+
+    if should_clear {
+        queue_mgr.clear_history(guild_id).await;
+        let _ = send_response(ctx, command, get_lang().history_cleared, false).await;
+        return;
+    }
+
+    let history = queue_mgr.get_history(guild_id).await;
+    if history.is_empty() {
+        let _ = send_response(ctx, command, get_lang().history_empty, false).await;
+        return;
+    }
+
+    let mut desc = String::new();
+    let total = history.len();
+    let display_limit = total.min(15);
+
+    for (i, track) in history.iter().rev().take(display_limit).enumerate() {
+        let dur = format_duration(track.duration);
+        let author = track.author.as_deref().unwrap_or("Unknown");
+        desc.push_str(&format!(
+            "{}. [{}]({}) — `{}` `[{}]`\n",
+            i + 1,
+            truncate(&track.title, 55),
+            track.url,
+            author,
+            dur
+        ));
+    }
+
+    if total > display_limit {
+        desc.push_str(&format!("\n*...and {} more unique songs in log*", total - display_limit));
+    }
+
+    let storage_badge = if queue_mgr.is_cloud() {
+        get_lang().playlist_storage_cloud
+    } else {
+        get_lang().playlist_storage_local
+    };
+
+    let base_footer = fmt(get_lang().history_footer, &[&total.to_string()]);
+    let footer_str = format!("{} • {}", base_footer, storage_badge);
+
+    let embed = CreateEmbed::new()
+        .title(get_lang().history_title)
+        .description(desc)
+        .color(Color::from_rgb(88, 101, 242))
+        .footer(serenity::all::CreateEmbedFooter::new(footer_str));
+
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new().embed(embed),
+            ),
+        )
+        .await;
 }

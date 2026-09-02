@@ -40,8 +40,8 @@ async fn main() {
         | GatewayIntents::non_privileged();
 
     let source_mgr = Arc::new(SourceManager::new());
-    let queue_mgr = Arc::new(QueueManager::new());
     let playlist_store = Arc::new(playlist::PlaylistStore::init().await);
+    let queue_mgr = Arc::new(QueueManager::new(Some(playlist_store.clone())));
 
     let handler = Handler {
         source_mgr,

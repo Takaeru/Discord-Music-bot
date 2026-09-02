@@ -25,6 +25,7 @@ pub struct Lang {
     pub cmd_filter: &'static str,
     pub cmd_autoplay: &'static str,
     pub cmd_playlist: &'static str,
+    pub cmd_history: &'static str,
 
     // === Command responses ===
     pub playback_paused: &'static str,
@@ -57,6 +58,10 @@ pub struct Lang {
     pub playlist_show_title: &'static str,  // has {}
     pub playlist_storage_cloud: &'static str,
     pub playlist_storage_local: &'static str,
+    pub history_title: &'static str,
+    pub history_empty: &'static str,
+    pub history_footer: &'static str,       // has {}
+    pub history_cleared: &'static str,
 
     // === Error messages ===
     pub nothing_playing: &'static str,
@@ -151,6 +156,7 @@ pub struct Lang {
     pub help_filter: &'static str,
     pub help_autoplay: &'static str,
     pub help_playlist: &'static str,
+    pub help_history: &'static str,
 
     // === Ping ===
     pub ping_title: &'static str,
@@ -214,6 +220,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_filter: "Apply an audio filter (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
     cmd_autoplay: "Toggle automatic music recommendations when the queue ends",
     cmd_playlist: "Manage personal saved music playlists (save, load, list, show, delete)",
+    cmd_history: "Show server playback history log (used as Autoplay reference)",
 
     playback_paused: "⏸️ Playback paused.",
     playback_resumed: "▶️ Playback resumed.",
@@ -245,6 +252,10 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_show_title: "📋 Playlist: {}",
     playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
     playlist_storage_local: "💾 Local File",
+    history_title: "📜 Playback History Log",
+    history_empty: "ℹ️ No tracks in playback history log yet.",
+    history_footer: "Total: {} unique song(s) • Autoplay Reference Active",
+    history_cleared: "🗑️ Playback history log has been cleared.",
 
     nothing_playing: "⚠️ Nothing is currently playing.",
     not_connected: "⚠️ Bot is not connected to a voice channel.",
@@ -334,6 +345,7 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_filter: "Apply audio filters (bassboost, nightcore, etc.)",
     help_autoplay: "Toggle autoplay (automatic related recommendations)",
     help_playlist: "Save, load, list, show, or delete personal playlists",
+    help_history: "Show server playback history log (used as Autoplay reference)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Bot Gateway Status",
@@ -389,6 +401,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     cmd_filter: "Terapkan efek suara (bassboost, nightcore, vaporwave, 8d, karaoke, off)",
     cmd_autoplay: "Aktifkan atau matikan rekomendasi musik otomatis saat antrean habis",
     cmd_playlist: "Kelola playlist musik pribadi (save, load, list, show, delete)",
+    cmd_history: "Lihat log riwayat lagu yang pernah diputar (acuan Autoplay)",
 
     playback_paused: "⏸️ Pemutaran dijeda.",
     playback_resumed: "▶️ Pemutaran dilanjutkan.",
@@ -420,6 +433,10 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_show_title: "📋 Playlist: {}",
     playlist_storage_cloud: "☁️ Cloud (MongoDB Atlas)",
     playlist_storage_local: "💾 File Lokal",
+    history_title: "📜 Log Riwayat Pemutaran Lagu",
+    history_empty: "ℹ️ Belum ada riwayat lagu yang diputar.",
+    history_footer: "Total: {} lagu unik • Acuan Autoplay Aktif",
+    history_cleared: "🗑️ Log riwayat pemutaran musik berhasil dibersihkan.",
 
     nothing_playing: "⚠️ Tidak ada yang sedang diputar.",
     not_connected: "⚠️ Bot tidak terhubung ke voice channel.",
@@ -509,6 +526,7 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     help_filter: "Terapkan efek suara (bassboost, nightcore, dll.)",
     help_autoplay: "Atur mode autoplay (rekomendasi lagu otomatis)",
     help_playlist: "Simpan, muat, lihat, atau hapus playlist pribadi",
+    help_history: "Lihat log riwayat lagu yang diputar (acuan Autoplay)",
 
     ping_title: "🏓 Pong!",
     ping_gateway_status: "⚡ Status Gateway Bot",
