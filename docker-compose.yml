@@ -1,29 +1,63 @@
+# Discord Music Bot — Docker Compose
+#
+# All runtime configuration comes from .env (via env_file below). Copy .env.example to .env
+# first and edit values there. The defaults here are only fallbacks if a var is missing
+# from .env — they intentionally keep MongoDB/LLM/Spotify disabled out-of-the-box so new
+# users get the local-storage + local-taste-profiler + anonymous-spotify defaults without
+# any extra setup. See .env.example for detailed docs on each variable.
+
 services:
   discord-bot:
     build: .
-    image: ghcr.io/takaeru/discord-music-bot:latest
+    image: ghcr.io/maha-atman/discord-music-bot:latest
     container_name: discord-music-bot
     restart: unless-stopped
     env_file:
       - path: .env
         required: false
     environment:
+      # ─ Core (always required) ─
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - RUST_LOG=${RUST_LOG:-info}
       - BOT_LANG=${BOT_LANG:-en}
-      - NOW_PLAYING_BEHAVIOR=${NOW_PLAYING_BEHAVIOR:-old}
+
+      # ─ Behavior toggles (have sensible zero-setup defaults) ─
+      # NOW_PLAYING_BEHAVIOR=new → clean channel (replaces previous card)
+      # NOW_PLAYING_BEHAVIOR=old → keep all cards in channel history
+      - NOW_PLAYING_BEHAVIOR=${NOW_PLAYING_BEHAVIOR:-new}
       - MAX_PLAYLIST_ITEMS=${MAX_PLAYLIST_ITEMS:-50}
+
+      # ─ MongoDB (optional — defaults to local file storage when blank) ─
+      # Fill values in .env to enable cloud-synced playlists.
       - MONGO_USER=${MONGO_USER:-}
       - MONGO_PASSWORD=${MONGO_PASSWORD:-}
       - MONGO_HOST=${MONGO_HOST:-}
-      - MONGO_APP_NAME=${MONGO_APP_NAME:-}
-      - MONGO_DATABASE=${MONGO_DATABASE:-}
+      - MONGO_APP_NAME=${MONGO_APP_NAME:-Cluster0}
+      - MONGO_DATABASE=${MONGO_DATABASE:-discord_music_bot}
       - MONGODB_URI=${MONGODB_URI:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+
+      # ─ LLM / AI DJ (optional — defaults to local heuristic taste profiler when blank) ─
+      # Fill in .env to enable an external LLM. See .env.example for provider list.
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_WEB_SEARCH=${LLM_WEB_SEARCH:-false}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
+
+      # ─ Spotify (optional — falls back to anonymous guest token when blank) ─
+      # Fill in .env for stable Spotify playback with higher rate limits.
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+
+      # ─ Custom assets / paths ─
+      - FFMPEG_PATH=${FFMPEG_PATH:-ffmpeg}
+      - YTDLP_PATH=${YTDLP_PATH:-yt-dlp}
+      - EMOJI_SPOTIFY=${EMOJI_SPOTIFY:-}
+      - EMOJI_YOUTUBE=${EMOJI_YOUTUBE:-}
+      - EMOJI_SOUNDCLOUD=${EMOJI_SOUNDCLOUD:-}
+
     volumes:
+      # data/ holds local playlist store (when MongoDB unused) and other persistent state
       - ./data:/app/data
     deploy:
       resources:

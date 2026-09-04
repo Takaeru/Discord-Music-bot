@@ -38,6 +38,7 @@ pub struct AiClient {
     model: String,
     base_url: Option<String>,
     web_search_enabled: bool,
+    is_local: bool,
     trivia_cache: Cache<String, String>,
 }
 
@@ -46,19 +47,63 @@ impl AiClient {
         let provider_str = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "gemini".to_string());
         let provider = AiProvider::from_str(&provider_str);
 
+        // Resolve API key. Order of precedence:
+        //   1. LLM_API_KEY (generic, always wins)
+        //   2. Provider-specific key matching the selected provider
+        //      (GEMINI_API_KEY for gemini, CLAUDE_API_KEY for claude, etc)
+        //   3. Ollama is a special case: no API key needed, but the local
+        //      server should be reachable.
         let api_key = std::env::var("LLM_API_KEY")
-            .or_else(|_| std::env::var("GEMINI_API_KEY"))
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .or_else(|_| std::env::var("CLAUDE_API_KEY"))
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                // Provider-specific fallback. Pick the one matching the
+                // selected provider so users with multiple keys set don't
+                // accidentally route Claude's key to Gemini, etc.
+                let env_var = match provider {
+                    AiProvider::Gemini => "GEMINI_API_KEY",
+                    AiProvider::Claude => "CLAUDE_API_KEY",
+                    AiProvider::OpenAi | AiProvider::OpenAiCompatible => "OPENAI_API_KEY",
+                };
+                std::env::var(env_var).ok().filter(|s| !s.trim().is_empty())
+            })
+            .or_else(|| {
+                // Ollama doesn't need a real API key — but only the
+                // OpenAI-compatible path handles it. If the user picked
+                // ollama and set no key, use a placeholder so is_enabled()
+                // returns true and the request still goes out.
+                if matches!(provider, AiProvider::OpenAiCompatible)
+                    && provider_str.to_lowercase().trim() == "ollama"
+                {
+                    Some("ollama".to_string())
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default()
             .trim()
             .to_string();
 
-        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| match provider {
-            AiProvider::Gemini => "gemini-1.5-flash".to_string(),
-            AiProvider::Claude => "claude-3-5-haiku-latest".to_string(),
-            AiProvider::OpenAi => "gpt-4o-mini".to_string(),
-            AiProvider::OpenAiCompatible => "gpt-4o-mini".to_string(),
+        // Default model selection. For openai_compatible, the model depends on which
+        // provider was selected (grok vs groq vs ollama etc) since they all use
+        // different model namespaces. Falls back to a sensible default per provider.
+        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| {
+            match provider {
+                AiProvider::Gemini => "gemini-1.5-flash".to_string(),
+                AiProvider::Claude => "claude-3-5-haiku-latest".to_string(),
+                AiProvider::OpenAi => "gpt-4o-mini".to_string(),
+                AiProvider::OpenAiCompatible => {
+                    match provider_str.to_lowercase().trim() {
+                        "grok" => "grok-2-latest".to_string(),
+                        "groq" => "llama-3.1-70b-versatile".to_string(),
+                        "qwen" => "qwen-plus".to_string(),
+                        "ollama" => "llama3.1".to_string(),
+                        "deepseek" => "deepseek-chat".to_string(),
+                        "openrouter" => "anthropic/claude-3.5-sonnet".to_string(),
+                        _ => "gpt-4o-mini".to_string(), // generic openai_compatible
+                    }
+                }
+            }
         });
 
         let base_url = std::env::var("LLM_BASE_URL")
@@ -75,7 +120,7 @@ impl AiClient {
                 provider, model, web_search_enabled, base_url
             );
         } else {
-            info!("AI DJ Client: No LLM_API_KEY provided. Using local heuristic fallback.");
+            info!("AI DJ Client: No LLM_API_KEY provided. AI features disabled (commands will skip LLM calls and use local fallbacks).");
         }
 
         Self {
@@ -89,6 +134,7 @@ impl AiClient {
             model,
             base_url,
             web_search_enabled,
+            is_local: provider_str.to_lowercase().trim() == "ollama",
             trivia_cache: Cache::builder()
                 .max_capacity(200)
                 .time_to_live(Duration::from_secs(24 * 3600))
@@ -100,10 +146,47 @@ impl AiClient {
         !self.api_key.is_empty()
     }
 
+    /// Returns true only if the client is fully usable — has a key AND (for
+    /// openai_compatible providers) a base URL configured. Without this check,
+    /// Ollama with no LLM_BASE_URL would silently send requests to api.openai.com
+    /// and get 401. Use this at call sites that need the LLM to actually work.
+    pub fn is_usable(&self) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        match self.provider {
+            AiProvider::Gemini | AiProvider::Claude | AiProvider::OpenAi => true,
+            AiProvider::OpenAiCompatible => self.base_url.is_some(),
+        }
+    }
+
+    /// Returns a short status string for the /ping command's Configuration field.
+    /// Format: "Provider=X, Model=Y, Usable=true/false (reason)"
+    pub fn diagnostics(&self) -> String {
+        if !self.is_enabled() {
+            return "Disabled (no API key)".to_string();
+        }
+        let provider_name = match self.provider {
+            AiProvider::Gemini => "Gemini",
+            AiProvider::Claude => "Claude",
+            AiProvider::OpenAi => "OpenAI",
+            AiProvider::OpenAiCompatible => "OpenAI-Compatible",
+        };
+        let usable = if self.is_usable() {
+            "OK".to_string()
+        } else {
+            "misconfigured (missing LLM_BASE_URL)".to_string()
+        };
+        format!("{} | {} | {}", provider_name, self.model, usable)
+    }
+
     /// Generic text generation across all supported LLM providers
     pub async fn generate_text(&self, system: &str, prompt: &str) -> Result<String, String> {
         if !self.is_enabled() {
             return Err("LLM_API_KEY not configured".to_string());
+        }
+        if !self.is_usable() {
+            return Err("LLM is enabled but not properly configured (missing LLM_BASE_URL for openai_compatible provider)".to_string());
         }
 
         match self.provider {
@@ -120,7 +203,10 @@ impl AiClient {
     }
 
     async fn enrich_with_web_search(&self, prompt: &str) -> String {
-        if !self.web_search_enabled {
+        // Local providers (Ollama) can't use real-time web search context
+        // effectively, and the DuckDuckGo fallback adds ~1-2s of latency
+        // for no benefit. Skip for local providers unless explicitly enabled.
+        if !self.web_search_enabled || self.is_local {
             return prompt.to_string();
         }
 

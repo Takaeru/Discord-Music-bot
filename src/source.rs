@@ -1524,7 +1524,7 @@ impl SourceManager {
             seeds.push(format!("new {} song 2024", em_trimmed));
             seeds.push(format!("{} official audio", em_trimmed));
 
-            if self.ai_client.is_enabled() {
+            if self.ai_client.is_usable() {
                 if let Ok(comment) = self.ai_client.comment_mood(em_trimmed).await {
                     profile.summary = format!("{}\n\n🎭 **Mood / Query:** \"{}\"", comment, em_trimmed);
                 } else {
@@ -1535,7 +1535,7 @@ impl SourceManager {
             }
         } else {
             // 2. No custom mood -> Use AI DJ taste commentary if enabled
-            if self.ai_client.is_enabled() {
+            if self.ai_client.is_usable() {
                 if let Ok(dj_review) = self.ai_client.review_taste(history).await {
                     profile.summary = format!("{}\n\n*{}*", dj_review, profile.summary);
                 }
