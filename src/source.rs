@@ -1490,7 +1490,7 @@ impl SourceManager {
             seeds.push(format!("{} music", em_trimmed));
             seeds.push(format!("{} best tracks", em_trimmed));
 
-            if self.ai_client.is_enabled() {
+            if self.ai_client.is_usable() {
                 if let Ok(comment) = self.ai_client.comment_mood(em_trimmed).await {
                     profile.summary = format!("{}\n\n🎭 **Mood / Query:** \"{}\"", comment, em_trimmed);
                 } else {
@@ -1501,7 +1501,7 @@ impl SourceManager {
             }
         } else {
             // 2. No custom mood -> Use AI DJ taste commentary if enabled
-            if self.ai_client.is_enabled() {
+            if self.ai_client.is_usable() {
                 if let Ok(dj_review) = self.ai_client.review_taste(history).await {
                     profile.summary = format!("{}\n\n*{}*", dj_review, profile.summary);
                 }
@@ -1717,5 +1717,24 @@ impl SourceManager {
         }
 
         (profile, results)
+    }
+}
+
+
+/// Returns a short status string for the /ping command's Configuration field.
+/// "Official API (credentials set)" or "Anonymous Guest (rate-limited)"
+pub fn spotify_diagnostics() -> String {
+    let id_set = std::env::var("SPOTIFY_CLIENT_ID")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    let secret_set = std::env::var("SPOTIFY_CLIENT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    if id_set && secret_set {
+        "Official API (credentials set)".to_string()
+    } else {
+        "Anonymous Guest (rate-limited fallback)".to_string()
     }
 }

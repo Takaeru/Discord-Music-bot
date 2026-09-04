@@ -108,8 +108,17 @@ impl PlaylistStore {
             local_lock: Arc::new(Mutex::new(())),
         }
     }
+    /// Returns a short human-readable status string for diagnostics.
+    /// "MongoDB Atlas (db=xxx)" or "Local File Storage (data/playlists.json)"
+    pub fn status(&self) -> String {
+        if self.mongo_client.is_some() {
+            format!("MongoDB Atlas (db={})", self.database_name)
+        } else {
+            format!("Local File Storage ({})", self.local_file.display())
+        }
+    }
 
-    fn resolve_mongo_uri() -> Option<String> {
+ fn resolve_mongo_uri() -> Option<String> {
         if let Ok(uri) = std::env::var("MONGODB_URI") {
             let trimmed = uri.trim();
             if !trimmed.is_empty() && trimmed.starts_with("mongodb") {

@@ -323,7 +323,7 @@ pub async fn handle_command(
         "history" => handle_history(ctx, command, queue_mgr).await,
         "recommend" | "recommendation" => handle_recommend(ctx, command, source_mgr, queue_mgr).await,
         "leave" => handle_leave(ctx, command, queue_mgr).await,
-        "ping" => handle_ping(ctx, command).await,
+        "ping" => handle_ping(ctx, command, source_mgr, playlist_store).await,
         "help" => handle_help(ctx, command).await,
         _ => {
             let _ = send_response(ctx, command, get_lang().unknown_command, false).await;

@@ -171,6 +171,10 @@ pub struct Lang {
     pub ping_gateway_value: &'static str,
     pub ping_audio_engine: &'static str,
     pub ping_audio_value: &'static str,
+    pub ping_configuration: &'static str,
+    pub ping_config_llm: &'static str,
+    pub ping_config_playlists: &'static str,
+    pub ping_config_spotify: &'static str,
 
     // === Replay ===
     pub replaying: &'static str, // has {} {}
@@ -366,6 +370,10 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     ping_gateway_value: "🟢 Connected & Operational",
     ping_audio_engine: "📻 Audio Engine",
     ping_audio_value: "Songbird 48kHz Stereo Opus (96kbps)",
+    ping_configuration: "🔧 Configuration",
+    ping_config_llm: "🤖 AI DJ",
+    ping_config_playlists: "💾 Playlists",
+    ping_config_spotify: "🎵 Spotify",
 
     replaying: "🔄 Replaying: [**{}**]({})",
 
@@ -554,6 +562,10 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     ping_gateway_value: "🟢 Terhubung & Beroperasi",
     ping_audio_engine: "📻 Mesin Audio",
     ping_audio_value: "Songbird 48kHz Stereo Opus (96kbps)",
+    ping_configuration: "🔧 Konfigurasi",
+    ping_config_llm: "🤖 AI DJ",
+    ping_config_playlists: "💾 Playlist",
+    ping_config_spotify: "🎵 Spotify",
 
     replaying: "🔄 Replaying: [**{}**]({})",
 
