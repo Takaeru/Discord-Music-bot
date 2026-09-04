@@ -29,6 +29,7 @@ pub fn source_icon_url(source: &str) -> &'static str {
         "Spotify" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/spotify.png",
         "YouTube" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/youtube.png",
         "SoundCloud" => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/soundcloud.png",
+        "JASMR" => "https://www.jasmr.net/jasmr-icon-64.webp",
         _ => "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/audiobookshelf.png",
     }
 }
@@ -38,6 +39,7 @@ pub fn source_color(source: &str) -> Color {
         "Spotify" => Color::from_rgb(30, 215, 96),   // Spotify Vibrant Green
         "YouTube" => Color::from_rgb(255, 0, 0),     // YouTube Vibrant Red
         "SoundCloud" => Color::from_rgb(255, 85, 0), // SoundCloud Orange
+        "JASMR" => Color::from_rgb(255, 136, 186),   // JASMR Pink
         _ => Color::from_rgb(88, 101, 242),          // Discord Blurple
     }
 }

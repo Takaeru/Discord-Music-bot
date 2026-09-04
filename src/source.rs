@@ -111,9 +111,73 @@ impl SourceManager {
             .unwrap_or(50)
     }
 
+    /// Parses a jasmr.net watch URL and returns a human-readable title + RJ code.
+    /// URL format: https://www.jasmr.net/watch/{RJ_CODE}/{slug}
+    fn parse_jasmr_url(url: &str) -> Option<(String, String)> {
+        let url = url.trim_end_matches('/');
+        // Find /watch/ segment
+        let watch_pos = url.find("/watch/")?;
+        let after_watch = &url[watch_pos + 7..];
+        // Split into RJ code and slug
+        let mut parts = after_watch.splitn(2, '/');
+        let rj_code = parts.next().unwrap_or("").to_string();
+        let slug = parts.next().unwrap_or("");
+        if rj_code.is_empty() {
+            return None;
+        }
+        // Convert slug (hyphen-separated) to title-case string
+        let title = if slug.is_empty() {
+            rj_code.clone()
+        } else {
+            slug.replace('-', " ")
+        };
+        Some((rj_code, title))
+    }
+
+    /// Resolves a jasmr.net URL by searching YouTube for the track title.
+    async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
+        let (rj_code, title) = Self::parse_jasmr_url(url)
+            .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
+
+        info!("Resolving jasmr.net URL via YouTube search: {} ({})", title, rj_code);
+
+        // Search YouTube using the title from the slug + RJ code for specificity
+        let search_query = format!("{} {}", title, rj_code);
+        let yt_results = self.resolve_single_query(&search_query).await?;
+
+        // Repackage: keep YouTube stream URL but use the original jasmr URL as the canonical URL
+        let tracks = yt_results
+            .into_iter()
+            .map(|mut t| {
+                t.url = url.to_string();
+                t.source = "JASMR".to_string();
+                // Preserve the title from the slug if YouTube didn't find an exact match
+                if t.title.is_empty() {
+                    t.title = title.clone();
+                }
+                t
+            })
+            .collect::<Vec<_>>();
+
+        if tracks.is_empty() {
+            return Err(format!(
+                "Could not find '{}' ({}) on YouTube",
+                title, rj_code
+            ));
+        }
+
+        Ok(tracks)
+    }
+
     /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
     pub async fn resolve(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_spotify = query.contains("open.spotify.com") || query.starts_with("spotify:");
+
+        // jasmr.net is a Vue SPA with no yt-dlp extractor — handle it via YouTube search fallback
+        let is_jasmr = query.contains("jasmr.net/watch/");
+        if is_jasmr {
+            return self.resolve_jasmr_url(query).await;
+        }
 
         if is_spotify {
             info!("Resolving Spotify URL: {}", query);
