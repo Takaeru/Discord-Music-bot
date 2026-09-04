@@ -111,62 +111,115 @@ impl SourceManager {
             .unwrap_or(50)
     }
 
-    /// Parses a jasmr.net watch URL and returns a human-readable title + RJ code.
+    /// Parses a jasmr.net watch URL into (rj_code, short_title, cv_name).
     /// URL format: https://www.jasmr.net/watch/{RJ_CODE}/{slug}
-    fn parse_jasmr_url(url: &str) -> Option<(String, String)> {
+    fn parse_jasmr_url(url: &str) -> Option<(String, String, Option<String>)> {
         let url = url.trim_end_matches('/');
-        // Find /watch/ segment
         let watch_pos = url.find("/watch/")?;
         let after_watch = &url[watch_pos + 7..];
-        // Split into RJ code and slug
         let mut parts = after_watch.splitn(2, '/');
         let rj_code = parts.next().unwrap_or("").to_string();
         let slug = parts.next().unwrap_or("");
         if rj_code.is_empty() {
             return None;
         }
-        // Convert slug (hyphen-separated) to title-case string
-        let title = if slug.is_empty() {
+
+        // Extract CV (voice actress) name from slug: look for "-cv-" segment
+        let words: Vec<&str> = slug.split('-').collect();
+        let cv_name = words
+            .windows(2)
+            .position(|w| w[0].eq_ignore_ascii_case("cv"))
+            .map(|cv_idx| {
+                // Collect remaining words after "cv" as the CV name
+                words[cv_idx + 1..]
+                    .iter()
+                    .map(|w| {
+                        let mut c = w.chars();
+                        match c.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty());
+
+        // Build short title: take words up to "cv" or first 8 words, whichever is less
+        let title_words: Vec<&str> = words
+            .iter()
+            .take_while(|w| !w.eq_ignore_ascii_case("cv"))
+            .copied()
+            .collect();
+        let short_title_words: Vec<&str> = title_words.iter().copied().take(8).collect();
+        let short_title = short_title_words.join(" ");
+
+        let display_title = if short_title.is_empty() {
             rj_code.clone()
         } else {
-            slug.replace('-', " ")
+            short_title
         };
-        Some((rj_code, title))
+
+        Some((rj_code, display_title, cv_name))
     }
 
-    /// Resolves a jasmr.net URL by searching YouTube for the track title.
+    /// Resolves a jasmr.net URL by searching YouTube with progressive fallback strategies.
+    /// Strategy 1: RJ code only (most precise — works when uploader uses the code in title)
+    /// Strategy 2: CV name + RJ code (finds CV-labelled uploads)
+    /// Strategy 3: Short title + RJ code (broader fallback)
     async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
-        let (rj_code, title) = Self::parse_jasmr_url(url)
+        let (rj_code, short_title, cv_name) = Self::parse_jasmr_url(url)
             .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
 
-        info!("Resolving jasmr.net URL via YouTube search: {} ({})", title, rj_code);
+        info!(
+            "Resolving jasmr.net URL — title: '{}', CV: {:?}, RJ: {}",
+            short_title, cv_name, rj_code
+        );
 
-        // Search YouTube using the title from the slug + RJ code for specificity
-        let search_query = format!("{} {}", title, rj_code);
-        let yt_results = self.resolve_single_query(&search_query).await?;
-
-        // Repackage: keep YouTube stream URL but use the original jasmr URL as the canonical URL
-        let tracks = yt_results
-            .into_iter()
-            .map(|mut t| {
+        let repackage = |mut tracks: Vec<TrackMetadata>, display_title: &str| -> Vec<TrackMetadata> {
+            tracks.iter_mut().for_each(|t| {
                 t.url = url.to_string();
                 t.source = "JASMR".to_string();
-                // Preserve the title from the slug if YouTube didn't find an exact match
                 if t.title.is_empty() {
-                    t.title = title.clone();
+                    t.title = display_title.to_string();
                 }
-                t
-            })
-            .collect::<Vec<_>>();
+            });
+            tracks
+        };
 
-        if tracks.is_empty() {
-            return Err(format!(
-                "Could not find '{}' ({}) on YouTube",
-                title, rj_code
-            ));
+        // Strategy 1: RJ code alone — highly specific for ASMR content
+        let q1 = rj_code.clone();
+        info!("JASMR search strategy 1 (RJ only): {}", q1);
+        if let Ok(results) = self.resolve_single_query(&q1).await {
+            if !results.is_empty() {
+                return Ok(repackage(results, &short_title));
+            }
         }
 
-        Ok(tracks)
+        // Strategy 2: CV name + RJ code
+        if let Some(ref cv) = cv_name {
+            let q2 = format!("{} {}", cv, rj_code);
+            info!("JASMR search strategy 2 (CV + RJ): {}", q2);
+            if let Ok(results) = self.resolve_single_query(&q2).await {
+                if !results.is_empty() {
+                    return Ok(repackage(results, &short_title));
+                }
+            }
+        }
+
+        // Strategy 3: Short title + RJ code
+        let q3 = format!("{} {}", short_title, rj_code);
+        info!("JASMR search strategy 3 (title + RJ): {}", q3);
+        if let Ok(results) = self.resolve_single_query(&q3).await {
+            if !results.is_empty() {
+                return Ok(repackage(results, &short_title));
+            }
+        }
+
+        Err(format!(
+            "Could not find JASMR track {} on YouTube. Try searching manually.",
+            rj_code
+        ))
     }
 
     /// Resolves a user query (YouTube, Spotify, SoundCloud, or keyword) into a list of TrackMetadata.
