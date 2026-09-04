@@ -163,61 +163,87 @@ impl SourceManager {
         Some((rj_code, display_title, cv_name))
     }
 
-    /// Resolves a jasmr.net URL by searching YouTube with progressive fallback strategies.
-    /// Strategy 1: RJ code only (most precise — works when uploader uses the code in title)
-    /// Strategy 2: CV name + RJ code (finds CV-labelled uploads)
-    /// Strategy 3: Short title + RJ code (broader fallback)
+    /// Resolves a jasmr.net URL directly from their media CDN.
+    /// jasmr.net serves audio at a predictable URL: /media/audio/{RJ_CODE}.mp3
+    /// Falls back to YouTube search if the direct URL is unreachable.
     async fn resolve_jasmr_url(&self, url: &str) -> Result<Vec<TrackMetadata>, String> {
         let (rj_code, short_title, cv_name) = Self::parse_jasmr_url(url)
             .ok_or_else(|| "Could not parse jasmr.net URL".to_string())?;
 
-        info!(
-            "Resolving jasmr.net URL — title: '{}', CV: {:?}, RJ: {}",
-            short_title, cv_name, rj_code
-        );
+        // Build display title: "Short Title (CV Name)" or just "Short Title"
+        let display_title = match &cv_name {
+            Some(cv) => format!("{} (CV: {})", short_title, cv),
+            None => short_title.clone(),
+        };
 
-        let repackage = |mut tracks: Vec<TrackMetadata>, display_title: &str| -> Vec<TrackMetadata> {
+        // Primary: direct MP3 from jasmr.net CDN
+        let direct_mp3 = format!("https://www.jasmr.net/media/audio/{}.mp3", rj_code);
+        info!("Trying jasmr.net direct stream: {}", direct_mp3);
+
+        let head_ok = self
+            .http_client
+            .head(&direct_mp3)
+            .send()
+            .await
+            .map(|r| r.status().is_success() || r.status().as_u16() == 206)
+            .unwrap_or(false);
+
+        if head_ok {
+            info!("jasmr.net direct stream confirmed for {}", rj_code);
+            return Ok(vec![TrackMetadata {
+                title: display_title,
+                url: url.to_string(),
+                stream_url: direct_mp3,
+                duration: None,
+                thumbnail: Some(format!("https://www.jasmr.net/media/image/{}.jpg", rj_code)),
+                author: cv_name,
+                source: "JASMR".to_string(),
+                requester: None,
+                view_count: None,
+                is_official: true,
+            }]);
+        }
+
+        // Fallback: YouTube search using RJ code
+        info!("Direct stream unavailable for {}, falling back to YouTube search", rj_code);
+        let repackage = |mut tracks: Vec<TrackMetadata>| -> Vec<TrackMetadata> {
             tracks.iter_mut().for_each(|t| {
                 t.url = url.to_string();
                 t.source = "JASMR".to_string();
                 if t.title.is_empty() {
-                    t.title = display_title.to_string();
+                    t.title = display_title.clone();
                 }
             });
             tracks
         };
 
-        // Strategy 1: RJ code alone — highly specific for ASMR content
-        let q1 = rj_code.clone();
-        info!("JASMR search strategy 1 (RJ only): {}", q1);
-        if let Ok(results) = self.resolve_single_query(&q1).await {
+        // Strategy 1: RJ code alone
+        if let Ok(results) = self.resolve_single_query(&rj_code).await {
             if !results.is_empty() {
-                return Ok(repackage(results, &short_title));
+                return Ok(repackage(results));
             }
         }
 
         // Strategy 2: CV name + RJ code
         if let Some(ref cv) = cv_name {
-            let q2 = format!("{} {}", cv, rj_code);
-            info!("JASMR search strategy 2 (CV + RJ): {}", q2);
-            if let Ok(results) = self.resolve_single_query(&q2).await {
+            let q = format!("{} {}", cv, rj_code);
+            if let Ok(results) = self.resolve_single_query(&q).await {
                 if !results.is_empty() {
-                    return Ok(repackage(results, &short_title));
+                    return Ok(repackage(results));
                 }
             }
         }
 
-        // Strategy 3: Short title + RJ code
+        // Strategy 3: Short title + RJ code (first 8 words)
         let q3 = format!("{} {}", short_title, rj_code);
-        info!("JASMR search strategy 3 (title + RJ): {}", q3);
         if let Ok(results) = self.resolve_single_query(&q3).await {
             if !results.is_empty() {
-                return Ok(repackage(results, &short_title));
+                return Ok(repackage(results));
             }
         }
 
         Err(format!(
-            "Could not find JASMR track {} on YouTube. Try searching manually.",
+            "Could not stream JASMR track {} — direct URL unreachable and not found on YouTube.",
             rj_code
         ))
     }
