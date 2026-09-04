@@ -1035,13 +1035,14 @@ impl SourceManager {
         score
     }
 
-    /// Evaluates whether a track strictly satisfies the Master Specification's official music release criteria.
-    pub fn is_verified_official_entry(title: &str, author: Option<&str>, source: &str) -> bool {
+    /// True if the track is spam/junk (1-hour loops, nightcore, reaction
+    /// channels, etc.) that should never be queued regardless of provenance.
+    /// Independent of `is_verified_official_entry` so the recommendation loop
+    /// can reject trash without requiring a canonical release.
+    pub fn is_trash_entry(title: &str, author: Option<&str>) -> bool {
         let title_lower = title.to_lowercase();
         let uploader_lower = author.unwrap_or("").to_lowercase();
-
-        // 1. Immediately reject obvious non-official content
-        if title_lower.contains("cover")
+        title_lower.contains("cover")
             || title_lower.contains("nightcore")
             || title_lower.contains("slowed")
             || title_lower.contains("reverb")
@@ -1055,9 +1056,21 @@ impl SourceManager {
             || uploader_lower.contains("nightcore")
             || uploader_lower.contains("lyrics")
             || uploader_lower.contains("covers")
-        {
+    }
+
+    /// Evaluates whether a track strictly satisfies the Master Specification's
+    /// official music release criteria. Composed of:
+    ///   1. `!is_trash_entry` — never queue spam, even if "official"
+    ///   2. Spotify catalog → always official
+    ///   3. YouTube Music auto-generated Topic channel (label-distributed)
+    ///   4. Vevo / label / official verified channel
+    ///   5. Official video / audio tag in title
+    pub fn is_verified_official_entry(title: &str, author: Option<&str>, source: &str) -> bool {
+        if Self::is_trash_entry(title, author) {
             return false;
         }
+        let title_lower = title.to_lowercase();
+        let uploader_lower = author.unwrap_or("").to_lowercase();
 
         // 2. Spotify official catalog releases are official
         if source == "Spotify" {
@@ -1628,7 +1641,9 @@ impl SourceManager {
                     let spotify_list = self.search_spotify(seed, query_limit).await.unwrap_or_default();
                     let mut found = None;
                     for cand in &spotify_list {
-                        if is_candidate_valid(cand, &results) && cand.is_official {
+                        if is_candidate_valid(cand, &results)
+                            && !Self::is_trash_entry(&cand.title, cand.author.as_deref())
+                        {
                             found = Some(cand.clone());
                             break;
                         }
@@ -1639,7 +1654,9 @@ impl SourceManager {
                     let sc_list = self.search_soundcloud(seed, query_limit).await.unwrap_or_default();
                     let mut found = None;
                     for cand in &sc_list {
-                        if is_candidate_valid(cand, &results) && cand.is_official {
+                        if is_candidate_valid(cand, &results)
+                            && !Self::is_trash_entry(&cand.title, cand.author.as_deref())
+                        {
                             found = Some(cand.clone());
                             break;
                         }
@@ -1650,7 +1667,9 @@ impl SourceManager {
                     let yt_list = self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default();
                     let mut found = None;
                     for cand in &yt_list {
-                        if is_candidate_valid(cand, &results) && cand.is_official {
+                        if is_candidate_valid(cand, &results)
+                            && !Self::is_trash_entry(&cand.title, cand.author.as_deref())
+                        {
                             found = Some(cand.clone());
                             break;
                         }
@@ -1658,56 +1677,27 @@ impl SourceManager {
                     found.or_else(|| yt_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
                 PlatformTarget::Any => {
-                    // Master Specification Section 8 Official Search Algorithm:
-                    // 1. YouTube Official
-                    // 2. Spotify Official
-                    // 3. SoundCloud Official
-                    // 4. Non-Official Fallback
-
-                    // Step 1: Search YouTube for official release
+                    // Single-platform search: YouTube only. The recommendation loop's
+                    // job is serendipitous discovery, not canonical-release lookup.
+                    // We block trash (1-hour loops, nightcore, reaction channels) but
+                    // accept any valid non-trash artist upload. The previous 3-platform
+                    // cascade (YT → Spotify → SC → fallback) was Issue 1's root cause:
+                    // when no result satisfied the strict "official" gate, every
+                    // iteration burnt 3 API calls searching for a canonical release
+                    // that didn't exist for these adversarial seeds.
                     let yt_list = self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default();
                     let mut selected = None;
                     for cand in &yt_list {
-                        if is_candidate_valid(cand, &results) && cand.is_official {
+                        if is_candidate_valid(cand, &results)
+                            && !Self::is_trash_entry(&cand.title, cand.author.as_deref())
+                        {
                             selected = Some(cand.clone());
                             break;
                         }
                     }
-
-                    // Step 2: If no YouTube official found, search Spotify Official
-                    if selected.is_none() {
-                        if let Ok(spot_list) = self.search_spotify(seed, query_limit).await {
-                            for cand in &spot_list {
-                                if is_candidate_valid(cand, &results) && cand.is_official {
-                                    selected = Some(cand.clone());
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // Step 3: If no Spotify official found, search SoundCloud Official
-                    if selected.is_none() {
-                        if let Ok(sc_list) = self.search_soundcloud(seed, query_limit).await {
-                            for cand in &sc_list {
-                                if is_candidate_valid(cand, &results) && cand.is_official {
-                                    selected = Some(cand.clone());
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // Step 4: If no official release exists on any platform, use non-official fallback
-                    if selected.is_none() {
-                        if let Some(cand) = yt_list.into_iter().find(|c| is_candidate_valid(c, &results)) {
-                            let mut fallback = cand;
-                            fallback.is_official = false;
-                            selected = Some(fallback);
-                        }
-                    }
-
-                    selected
+                    // Fallback: if no non-trash result, take first valid result
+                    // (better an empty slot than 3 more API calls).
+                    selected.or_else(|| yt_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
             };
 
@@ -1717,5 +1707,97 @@ impl SourceManager {
         }
 
         (profile, results)
+    }
+}
+
+#[cfg(test)]
+mod issue1_tests {
+    //! Verifies Issue 1 fix: `is_trash_entry` blocks adversarial seeds,
+    //! genuine uploads pass, and `is_verified_official_entry` (composed)
+    //! preserves its old behavior for the line-613 caller.
+
+    use super::SourceManager;
+
+    #[test]
+    fn adversarial_titles_are_trash() {
+        let adversarial = [
+            ("Song Remix (Official Audio)", "RandomChannel"),
+            ("Best Song Cover Live", "SomeCover"),
+            ("Nightcore - Song", "NightcoreHub"),
+            ("Song 1 Hour Loop", "LongBeats"),
+            ("Song Reaction", "ReactMan"),
+            ("Song (Slowed + Reverb)", "ChillBeats"),
+            ("Song AMV", "AnimeFan"),
+            ("Lofi Song 10 hour", "LongBeats"),
+            ("Fanmade Soundtrack", "FanEditor"),
+        ];
+        for (title, author) in adversarial {
+            assert!(
+                SourceManager::is_trash_entry(title, Some(author)),
+                "expected TRASH: title={:?} author={:?}",
+                title,
+                author
+            );
+        }
+    }
+
+    #[test]
+    fn genuine_uploads_are_not_trash() {
+        let genuine = [
+            ("Some Indie Track", "IndieArtist"),
+            ("Lo-fi Beats to Study To", "ChillHop"),
+            ("Song - Topic", "Various Artists - Topic"),
+            ("Hit Song", "VEVO"),
+            ("Original Mix", "TechRecords"),
+            ("Track Title", "Atlantic Entertainment"),
+        ];
+        for (title, author) in genuine {
+            assert!(
+                !SourceManager::is_trash_entry(title, Some(author)),
+                "expected ACCEPT: title={:?} author={:?}",
+                title,
+                author
+            );
+        }
+    }
+
+    #[test]
+    fn composed_official_predicate_unchanged() {
+        let cases = [
+            ("Hit Song", Some("VEVO"), "YouTube", true),  // vevo → official
+            ("Song - Topic", Some("Artist - Topic"), "YouTube", true),  // topic channel
+            ("Official Audio Track", Some("Random"), "YouTube", true), // title tag
+            ("Best Song Cover", Some("Random"), "YouTube", false),     // cover → reject
+            ("Spotify Track", Some("Artist"), "Spotify", true),        // spotify source
+            ("Nightcore Song", Some("Artist"), "YouTube", false),      // nightcore → reject
+            ("Random Song", Some("RandomChannel"), "YouTube", false),  // no provenance → reject
+        ];
+        for (title, author, source, expected) in cases {
+            let got = SourceManager::is_verified_official_entry(title, author, source);
+            assert_eq!(
+                got, expected,
+                "title={:?} author={:?} source={:?} expected={} got={}",
+                title, author, source, expected, got
+            );
+        }
+    }
+}
+
+
+/// Returns a short status string for the /ping command's Configuration field.
+/// "Official API (credentials set)" or "Anonymous Guest (rate-limited)"
+pub fn spotify_diagnostics() -> String {
+    let id_set = std::env::var("SPOTIFY_CLIENT_ID")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    let secret_set = std::env::var("SPOTIFY_CLIENT_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+    if id_set && secret_set {
+        "Official API (credentials set)".to_string()
+    } else {
+        "Anonymous Guest (rate-limited fallback)".to_string()
     }
 }
