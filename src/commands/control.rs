@@ -712,11 +712,33 @@ pub async fn handle_autoplay(
     let _ = send_response(ctx, command, msg, false).await;
 }
 
-pub async fn handle_ping(ctx: &Context, command: &CommandInteraction) {
+pub async fn handle_ping(
+    ctx: &Context,
+    command: &CommandInteraction,
+    source_mgr: &Arc<crate::source::SourceManager>,
+    playlist_store: &Arc<crate::playlist::PlaylistStore>,
+) {
+    let lang = get_lang();
+    let llm_status = source_mgr.ai().diagnostics();
+    let playlist_status = playlist_store.status();
+    let spotify_status = crate::source::spotify_diagnostics();
+
     let embed = CreateEmbed::new()
-        .title(get_lang().ping_title)
-        .field(get_lang().ping_gateway_status, get_lang().ping_gateway_value, false)
-        .field(get_lang().ping_audio_engine, get_lang().ping_audio_value, false)
+        .title(lang.ping_title)
+        .field(lang.ping_gateway_status, lang.ping_gateway_value, false)
+        .field(lang.ping_audio_engine, lang.ping_audio_value, false)
+        .field(
+            lang.ping_configuration,
+            format!(
+                "{} {}
+{} {}
+{} {}",
+                lang.ping_config_llm, llm_status,
+                lang.ping_config_playlists, playlist_status,
+                lang.ping_config_spotify, spotify_status,
+            ),
+            false,
+        )
         .color(Color::from_rgb(88, 101, 242));
 
     let _ = command
@@ -1215,7 +1237,7 @@ pub async fn handle_recommend(
         return;
     }
 
-    if source_mgr.ai().is_enabled() {
+    if source_mgr.ai().is_usable() {
         if let Some(first) = tracks.first() {
             let author = first.author.as_deref().unwrap_or("");
             if let Ok(t) = source_mgr.ai().get_trivia(&first.title, author).await {
