@@ -1470,11 +1470,18 @@ impl SourceManager {
         (target, requested_count, final_query)
     }
 
-    /// Generates music recommendations based on server playback history or custom mood
-    /// using weighted probability rarity:
-    /// - 40% YouTube
-    /// - 30% Spotify
-    /// - 30% SoundCloud
+    /// Generates music recommendations based on server playback history or custom mood.
+    ///
+    /// Per-iter behavior depends on the detected `PlatformTarget`:
+    ///   - `Any` (default, no platform prefix in query): YouTube first.
+    ///     If YT yields no non-trash short track for the current seed,
+    ///     Spotify catalog is queried as a fallback. SoundCloud is not
+    ///     queried from seeds.
+    ///   - `Spotify` / `SoundCloud` / `YouTube` (user-explicit platform
+    ///     prefix like `dari spotify`, `on soundcloud`, `dari youtube`):
+    ///     only that platform is queried.
+    ///   - `Search` (`scsearch`/`ytsearch`/`spotify:` URL): direct
+    ///     extractor via yt-dlp, no fallback chain.
     pub async fn get_recommendations(
         &self,
         history: &[TrackMetadata],
@@ -1496,12 +1503,26 @@ impl SourceManager {
             let effective_mood = if clean_mood.is_empty() { mood.unwrap() } else { &clean_mood };
             let em_trimmed = effective_mood.trim();
 
-            // Real live search seeds directly to YouTube, Spotify, and SoundCloud
+            // Real live search seeds feed the per-iter platform dispatch
+            // (see the doc comment on get_recommendations for the full picture).
+            // In PlatformTarget::Any, seeds only ever feed into YouTube and
+            // (as fallback) Spotify. SoundCloud is not queried from seeds.
+            //
+            // Note on seed diversity: empirical testing showed that YT returns
+            // mostly 1-hour+ mixes/streams for generic mood phrases like
+            // "chill lofi" (top 10 results, 0 pass the 10-min duration filter).
+            // YT only returns actual short tracks for *specific* phrasing:
+            //   - "X type beat" → producer-uploaded individual beats (4/10 pass)
+            //   - "X song single" → explicit single-song intent
+            //   - "X official audio" → canonical-track trigger
+            //   - "X artist" or "X - track" → specific named-track lookup
+            // So we mix generic phrases with producer-style + recency phrasing
+            // to maximize the chance of getting short tracks back.
             seeds.push(em_trimmed.to_string());
-            seeds.push(format!("{} hits", em_trimmed));
-            seeds.push(format!("{} popular songs", em_trimmed));
-            seeds.push(format!("{} music", em_trimmed));
-            seeds.push(format!("{} best tracks", em_trimmed));
+            seeds.push(format!("{} type beat", em_trimmed));
+            seeds.push(format!("{} song single", em_trimmed));
+            seeds.push(format!("new {} song 2024", em_trimmed));
+            seeds.push(format!("{} official audio", em_trimmed));
 
             if self.ai_client.is_enabled() {
                 if let Ok(comment) = self.ai_client.comment_mood(em_trimmed).await {
@@ -1677,14 +1698,17 @@ impl SourceManager {
                     found.or_else(|| yt_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
                 PlatformTarget::Any => {
-                    // Single-platform search: YouTube only. The recommendation loop's
-                    // job is serendipitous discovery, not canonical-release lookup.
-                    // We block trash (1-hour loops, nightcore, reaction channels) but
-                    // accept any valid non-trash artist upload. The previous 3-platform
-                    // cascade (YT → Spotify → SC → fallback) was Issue 1's root cause:
-                    // when no result satisfied the strict "official" gate, every
-                    // iteration burnt 3 API calls searching for a canonical release
-                    // that didn't exist for these adversarial seeds.
+                    // YT-first with Spotify fallback when YT yields no short
+                    // non-trash result. Rationale:
+                    //   - YT search is the cheap default (covers most music)
+                    //   - For generic mood phrases ("chill lofi"), YT returns
+                    //     mostly 1-hour+ mixes/streams that fail the 10-min
+                    //     duration filter in is_candidate_valid.
+                    //   - Spotify catalog search returns actual tracks (no
+                    //     long-mix pollution) for the same query.
+                    //   - This adds 1 API call only when YT fails — not every
+                    //     iteration. The previous 3-platform cascade was the
+                    //     bug; this is a targeted fallback.
                     let yt_list = self.resolve_single_query(&format!("ytsearch{}:{}", query_limit, seed)).await.unwrap_or_default();
                     let mut selected = None;
                     for cand in &yt_list {
@@ -1695,8 +1719,22 @@ impl SourceManager {
                             break;
                         }
                     }
-                    // Fallback: if no non-trash result, take first valid result
-                    // (better an empty slot than 3 more API calls).
+                    // Spotify fallback: only fires when YT yielded no
+                    // non-trash short track for this seed.
+                    if selected.is_none() {
+                        if let Ok(spot_list) = self.search_spotify(seed, query_limit).await {
+                            for cand in &spot_list {
+                                if is_candidate_valid(cand, &results)
+                                    && !Self::is_trash_entry(&cand.title, cand.author.as_deref())
+                                {
+                                    selected = Some(cand.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Final fallback: any valid YT result (including long
+                    // mixes) — better an empty slot than burning more calls.
                     selected.or_else(|| yt_list.into_iter().find(|c| is_candidate_valid(c, &results)))
                 }
             };
