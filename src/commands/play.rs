@@ -960,4 +960,3 @@ pub async fn handle_playlist_modal(
             .await;
     }
 }
-}
