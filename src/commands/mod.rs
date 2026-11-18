@@ -7,7 +7,7 @@ pub mod queue;
 
 use serenity::all::{
     CommandInteraction, CommandOptionType, ComponentInteraction, Context, CreateCommand,
-    CreateCommandOption,
+    CreateCommandOption, ModalInteraction,
 };
 use std::sync::Arc;
 
@@ -24,7 +24,9 @@ use self::control::{
     handle_stop, handle_volume,
 };
 use self::lyrics::handle_lyrics;
-use self::play::{handle_play, handle_playnext};
+use self::play::{
+    handle_play, handle_playlist_component, handle_playlist_modal, handle_playnext,
+};
 use self::playlist::handle_playlist;
 use self::queue::{handle_nowplaying, handle_queue, handle_queue_component};
 
@@ -345,12 +347,29 @@ pub async fn handle_component(
         handle_music_component(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id == "search_play" {
         handle_search_play(ctx, component, source_mgr, queue_mgr).await;
+    } else if custom_id.starts_with("playlist_all:")
+        || custom_id.starts_with("playlist_partial:")
+        || custom_id.starts_with("playlist_cancel:")
+    {
+        handle_playlist_component(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id == "recommend_select" {
         handle_recommend_select(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id.starts_with("recommend_all:") {
         handle_recommend_all(ctx, component, source_mgr, queue_mgr).await;
     } else if custom_id.starts_with("recommend_page:") {
         handle_recommend_page(ctx, component, queue_mgr).await;
+    }
+}
+
+pub async fn handle_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let custom_id = modal.data.custom_id.as_str();
+    if custom_id.starts_with("playlist_modal:") {
+        handle_playlist_modal(ctx, modal, source_mgr, queue_mgr).await;
     }
 }
 

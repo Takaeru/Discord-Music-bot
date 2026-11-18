@@ -4,7 +4,7 @@ use serenity::all::{
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::commands::{handle_command, handle_component, register_commands};
+use crate::commands::{handle_command, handle_component, handle_modal, register_commands};
 use crate::playlist::PlaylistStore;
 use crate::queue::QueueManager;
 use crate::source::SourceManager;
@@ -51,6 +51,10 @@ impl EventHandler for Handler {
             Interaction::Component(component) => {
                 info!("Handling component interaction: {}", component.data.custom_id);
                 handle_component(&ctx, &component, &self.source_mgr, &self.queue_mgr).await;
+            }
+            Interaction::Modal(modal) => {
+                info!("Handling modal interaction: {}", modal.data.custom_id);
+                handle_modal(&ctx, &modal, &self.source_mgr, &self.queue_mgr).await;
             }
             _ => {}
         }

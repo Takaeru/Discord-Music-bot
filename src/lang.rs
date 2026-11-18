@@ -183,6 +183,17 @@ pub struct Lang {
     pub playlist_enqueued: &'static str, // has {}
     pub playlist_added: &'static str,    // has {}
     pub platform_label: &'static str,    // has {}
+    pub playlist_detected_title: &'static str,
+    pub playlist_detected_desc: &'static str,       // has {} {} {}
+    pub btn_playlist_load_all: &'static str,         // has {}
+    pub btn_playlist_load_partial: &'static str,
+    pub btn_playlist_cancel: &'static str,
+    pub playlist_modal_title: &'static str,
+    pub playlist_modal_label: &'static str,          // has {}
+    pub playlist_modal_placeholder: &'static str,
+    pub playlist_load_cancelled: &'static str,
+    pub playlist_invalid_count: &'static str,        // has {}
+    pub playlist_only_requester: &'static str,       // has {}
 
     // === Search ===
     pub search_results_desc: &'static str, // has {} {}
@@ -380,6 +391,17 @@ static EN: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_enqueued: "{} Playlist Enqueued",
     playlist_added: "Added {} tracks to queue",
     platform_label: "Platform: {}",
+    playlist_detected_title: "📑 Playlist Detected",
+    playlist_detected_desc: "This playlist contains **{}** tracks.\n\nFirst track: [**{}**]({})\n\nWould you like to load **all tracks** or **only a part**?",
+    btn_playlist_load_all: "Load All ({})",
+    btn_playlist_load_partial: "Load Partial...",
+    btn_playlist_cancel: "Cancel",
+    playlist_modal_title: "Load Partial Playlist",
+    playlist_modal_label: "Number of tracks to load (1 - {}):",
+    playlist_modal_placeholder: "e.g. 10",
+    playlist_load_cancelled: "❌ Playlist loading cancelled.",
+    playlist_invalid_count: "⚠️ Please enter a valid number between 1 and {}.",
+    playlist_only_requester: "⚠️ Only {} can choose how to load this playlist.",
 
     search_results_desc: "Found {} results — select below or click a link:\n\n{}",
 
@@ -572,6 +594,17 @@ static ID: LazyLock<Lang> = LazyLock::new(|| Lang {
     playlist_enqueued: "{} Playlist Enqueued",
     playlist_added: "Added {} tracks to queue",
     platform_label: "Platform: {}",
+    playlist_detected_title: "📑 Playlist Terdeteksi",
+    playlist_detected_desc: "Playlist ini berisi **{}** lagu.\n\nLagu pertama: [**{}**]({})\n\nApakah kamu ingin memuat **semua lagu** atau **sebagian saja**?",
+    btn_playlist_load_all: "Muat Semua ({})",
+    btn_playlist_load_partial: "Muat Sebagian...",
+    btn_playlist_cancel: "Batal",
+    playlist_modal_title: "Muat Sebagian Playlist",
+    playlist_modal_label: "Jumlah lagu yang ingin dimuat (1 - {}):",
+    playlist_modal_placeholder: "contoh: 10",
+    playlist_load_cancelled: "❌ Pemuatan playlist dibatalkan.",
+    playlist_invalid_count: "⚠️ Masukkan angka yang valid antara 1 dan {}.",
+    playlist_only_requester: "⚠️ Hanya {} yang dapat memilih opsi pemuatan playlist ini.",
 
     search_results_desc: "Found {} results — select below or click a link:\n\n{}",
 

@@ -1,7 +1,9 @@
 use serenity::all::{
-    CommandDataOptionValue, CommandInteraction, Context, CreateActionRow, CreateEmbed,
-    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponseFollowup, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption,
+    ButtonStyle, CommandDataOptionValue, CommandInteraction, ComponentInteraction, Context,
+    CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
+    CreateInputText, CreateInteractionResponse, CreateInteractionResponseFollowup,
+    CreateInteractionResponseMessage, CreateModal, CreateSelectMenu, CreateSelectMenuKind,
+    CreateSelectMenuOption, EditMessage, InputTextStyle, ModalInteraction,
 };
 use songbird::events::{Event, TrackEvent};
 use std::sync::Arc;
@@ -11,7 +13,7 @@ use super::events::TrackEndHandler;
 use crate::lang::{fmt, get_lang};
 use crate::queue::{LoopMode, QueueManager};
 use crate::source::SourceManager;
-use crate::utils::embed::{build_now_playing_embed, format_duration, source_color, source_icon_url};
+use crate::utils::embed::{build_now_playing_embed, source_color, source_icon_url};
 use crate::utils::response::{send_followup, send_response};
 
 pub async fn handle_play(
@@ -188,13 +190,13 @@ pub async fn handle_play(
         track.requester = Some(requester_tag.clone());
     }
 
-    let mut handler = call_lock.lock().await;
-    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-    let is_currently_playing = handler.queue().current().is_some();
-
-    queue_mgr.set_text_channel(guild_id, command.channel_id).await;
-
     if resolved.len() == 1 {
+        let mut handler = call_lock.lock().await;
+        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+        let is_currently_playing = handler.queue().current().is_some();
+
+        queue_mgr.set_text_channel(guild_id, command.channel_id).await;
+
         let track = resolved[0].clone();
         queue_mgr.push_track(guild_id, track.clone()).await;
 
@@ -242,67 +244,31 @@ pub async fn handle_play(
             queue_mgr.set_last_message_id(guild_id, msg.id).await;
         }
     } else {
-        // Playlist handling (instant enqueue without blocking!)
-        let total_tracks = resolved.len();
-        let source_name = resolved[0].source.clone();
-        let first_track = resolved[0].clone();
-
-        queue_mgr.push_playlist(guild_id, resolved.clone()).await;
-
-        if !is_currently_playing {
-            let filter = queue_mgr.get_filter(guild_id).await;
-            let input = source_mgr
-                .create_input_filtered(&first_track.stream_url, None, filter.ffmpeg_filter())
-                .await;
-            let track_handle = handler.enqueue_input(input).await;
-            let _ = track_handle.set_volume(0.8);
-
-            // Mark as current track and record ONLY the track that actually starts playing
-            queue_mgr.set_current_track(guild_id, first_track.clone()).await;
-            queue_mgr.push_history(guild_id, first_track.clone()).await;
-
-            if loop_mode == LoopMode::Track {
-                let _ = track_handle.enable_loop();
-            }
-
-            let _ = track_handle.add_event(
-                Event::Track(TrackEvent::End),
-                TrackEndHandler {
-                    guild_id,
-                    queue_mgr: queue_mgr.clone(),
-                    source_mgr: source_mgr.clone(),
-                    call_lock: call_lock.clone(),
-                    http: ctx.http.clone(),
-                },
-            );
-        }
-
-        let queue_len = queue_mgr.get_queue(guild_id).await.len();
-
-        let mut embed = CreateEmbed::new()
-            .author(
-                CreateEmbedAuthor::new(fmt(get_lang().playlist_enqueued, &[&source_name]))
-                    .icon_url(source_icon_url(&source_name)),
-            )
-            .title(fmt(get_lang().playlist_added, &[&total_tracks]))
-            .field(get_lang().field_first_track, format!("[**{}**]({})", first_track.title, first_track.url), false)
-            .field(get_lang().field_queue_total, fmt(get_lang().tracks_count, &[&queue_len]), true)
-            .field(get_lang().field_requested_by_play, &requester_tag, true)
-            .footer(
-                CreateEmbedFooter::new(fmt(get_lang().platform_label, &[&source_name]))
-                    .icon_url(source_icon_url(&source_name)),
-            )
-            .color(source_color(&source_name));
-
-        if let Some(thumb) = &first_track.thumbnail {
-            embed = embed.thumbnail(thumb);
-        }
+        // Playlist handling -> show dialog first
+        let session_id = format!("{:016x}", rand::random::<u64>());
+        let (embed, action_row) = create_playlist_prompt(&session_id, &resolved, &requester_tag);
 
         if let Ok(msg) = command
-            .create_followup(&ctx.http, CreateInteractionResponseFollowup::new().embed(embed))
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
+            )
             .await
         {
-            queue_mgr.set_last_message_id(guild_id, msg.id).await;
+            let pending = crate::queue::PendingPlaylist {
+                session_id: session_id.clone(),
+                guild_id,
+                channel_id: command.channel_id,
+                message_id: msg.id,
+                user_id: command.user.id,
+                requester_tag,
+                tracks: resolved,
+                created_at: std::time::Instant::now(),
+                play_next: false,
+            };
+            queue_mgr.set_pending_playlist(session_id, pending).await;
         }
     }
 }
@@ -500,13 +466,13 @@ pub async fn handle_playnext(
         track.requester = Some(requester_tag.clone());
     }
 
-    let mut handler = call_lock.lock().await;
-    let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
-    let is_currently_playing = handler.queue().current().is_some();
-
-    queue_mgr.set_text_channel(guild_id, command.channel_id).await;
-
     if resolved.len() == 1 {
+        let mut handler = call_lock.lock().await;
+        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
+        let is_currently_playing = handler.queue().current().is_some();
+
+        queue_mgr.set_text_channel(guild_id, command.channel_id).await;
+
         let track = resolved[0].clone();
         // Use push_next instead of push_track
         queue_mgr.push_next(guild_id, track.clone()).await;
@@ -554,13 +520,120 @@ pub async fn handle_playnext(
             queue_mgr.set_last_message_id(guild_id, msg.id).await;
         }
     } else {
-        // Playlist → use push_next for first track, push_playlist for rest
-        let total_tracks = resolved.len();
-        let source_name = resolved[0].source.clone();
-        let first_track = resolved[0].clone();
+        // Playlist handling -> show dialog first
+        let session_id = format!("{:016x}", rand::random::<u64>());
+        let (embed, action_row) = create_playlist_prompt(&session_id, &resolved, &requester_tag);
 
-        // Insert all at position 1+ preserving order
-        queue_mgr.push_next_playlist(guild_id, resolved.clone()).await;
+        if let Ok(msg) = command
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .embed(embed)
+                    .components(vec![action_row]),
+            )
+            .await
+        {
+            let pending = crate::queue::PendingPlaylist {
+                session_id: session_id.clone(),
+                guild_id,
+                channel_id: command.channel_id,
+                message_id: msg.id,
+                user_id: command.user.id,
+                requester_tag,
+                tracks: resolved,
+                created_at: std::time::Instant::now(),
+                play_next: true,
+            };
+            queue_mgr.set_pending_playlist(session_id, pending).await;
+        }
+    }
+}
+
+pub fn create_playlist_prompt(
+    session_id: &str,
+    tracks: &[crate::source::TrackMetadata],
+    requester_tag: &str,
+) -> (CreateEmbed, CreateActionRow) {
+    let total_tracks = tracks.len();
+    let source_name = &tracks[0].source;
+    let first_track = &tracks[0];
+
+    let desc = fmt(
+        get_lang().playlist_detected_desc,
+        &[&total_tracks, &first_track.title, &first_track.url],
+    );
+
+    let mut embed = CreateEmbed::new()
+        .author(
+            CreateEmbedAuthor::new(get_lang().playlist_detected_title)
+                .icon_url(source_icon_url(source_name)),
+        )
+        .title(fmt(get_lang().playlist_added, &[&total_tracks]))
+        .description(desc)
+        .field(
+            get_lang().field_first_track,
+            format!("[**{}**]({})", first_track.title, first_track.url),
+            false,
+        )
+        .field(get_lang().field_requested_by_play, requester_tag, true)
+        .color(source_color(source_name));
+
+    if let Some(thumb) = &first_track.thumbnail {
+        embed = embed.thumbnail(thumb);
+    }
+
+    let load_all_label = fmt(get_lang().btn_playlist_load_all, &[&total_tracks]);
+    let btn_all = CreateButton::new(format!("playlist_all:{}", session_id))
+        .label(format!("▶️ {}", load_all_label))
+        .style(ButtonStyle::Success);
+
+    let btn_partial = CreateButton::new(format!("playlist_partial:{}", session_id))
+        .label(format!("🔢 {}", get_lang().btn_playlist_load_partial))
+        .style(ButtonStyle::Primary);
+
+    let btn_cancel = CreateButton::new(format!("playlist_cancel:{}", session_id))
+        .label(format!("✖️ {}", get_lang().btn_playlist_cancel))
+        .style(ButtonStyle::Danger);
+
+    let row = CreateActionRow::Buttons(vec![btn_all, btn_partial, btn_cancel]);
+
+    (embed, row)
+}
+
+pub async fn enqueue_playlist_tracks(
+    ctx: &Context,
+    guild_id: serenity::all::GuildId,
+    channel_id: serenity::all::ChannelId,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+    tracks: Vec<crate::source::TrackMetadata>,
+    play_next: bool,
+    requester_tag: &str,
+) -> CreateEmbed {
+    let total_loaded = tracks.len();
+    if tracks.is_empty() {
+        return CreateEmbed::new().description("⚠️ No tracks to enqueue.");
+    }
+
+    let source_name = tracks[0].source.clone();
+    let first_track = tracks[0].clone();
+
+    queue_mgr.set_text_channel(guild_id, channel_id).await;
+
+    if play_next {
+        queue_mgr.push_next_playlist(guild_id, tracks.clone()).await;
+    } else {
+        queue_mgr.push_playlist(guild_id, tracks.clone()).await;
+    }
+
+    let manager = songbird::get(ctx)
+        .await
+        .expect("Songbird Voice client placed in at initialization");
+
+    if let Some(call_lock) = manager.get(guild_id) {
+        let mut handler = call_lock.lock().await;
+        let is_currently_playing = handler.queue().current().is_some();
+        let loop_mode = queue_mgr.get_loop_mode(guild_id).await;
 
         if !is_currently_playing {
             let filter = queue_mgr.get_filter(guild_id).await;
@@ -570,6 +643,7 @@ pub async fn handle_playnext(
             let track_handle = handler.enqueue_input(input).await;
             let _ = track_handle.set_volume(0.8);
 
+            // Mark as current track and record ONLY the track that actually starts playing
             queue_mgr.set_current_track(guild_id, first_track.clone()).await;
             queue_mgr.push_history(guild_id, first_track.clone()).await;
 
@@ -588,30 +662,302 @@ pub async fn handle_playnext(
                 },
             );
         }
+    }
 
-        let queue_len = queue_mgr.get_queue(guild_id).await.len();
+    let queue_len = queue_mgr.get_queue(guild_id).await.len();
 
-        let mut embed = CreateEmbed::new()
-            .author(
-                CreateEmbedAuthor::new(fmt(get_lang().playlist_enqueued, &[&source_name]))
-                    .icon_url(source_icon_url(&source_name)),
-            )
-            .title(fmt(get_lang().playlist_added, &[&total_tracks]))
-            .color(source_color(&source_name));
+    let mut embed = CreateEmbed::new()
+        .author(
+            CreateEmbedAuthor::new(fmt(get_lang().playlist_enqueued, &[&source_name]))
+                .icon_url(source_icon_url(&source_name)),
+        )
+        .title(fmt(get_lang().playlist_added, &[&total_loaded]))
+        .field(
+            get_lang().field_first_track,
+            format!("[**{}**]({})", first_track.title, first_track.url),
+            false,
+        )
+        .field(
+            get_lang().field_queue_total,
+            fmt(get_lang().tracks_count, &[&queue_len]),
+            true,
+        )
+        .field(get_lang().field_requested_by_play, requester_tag, true)
+        .footer(
+            CreateEmbedFooter::new(fmt(get_lang().platform_label, &[&source_name]))
+                .icon_url(source_icon_url(&source_name)),
+        )
+        .color(source_color(&source_name));
 
-        let mut fields = vec![];
-        fields.push((get_lang().field_queue_total.to_string(), fmt(get_lang().tracks_count, &[&queue_len]), true));
-        fields.push((get_lang().field_first_track.to_string(), format!("[{}]({})", first_track.title, first_track.url), true));
-        if let Some(dur) = first_track.duration {
-            fields.push((get_lang().field_duration.to_string(), format_duration(Some(dur)), true));
-        }
-        embed = embed.fields(fields);
+    if let Some(thumb) = &first_track.thumbnail {
+        embed = embed.thumbnail(thumb);
+    }
 
-        let _ = command
-            .create_followup(
+    embed
+}
+
+pub async fn handle_playlist_component(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match component.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, component.user.id) {
+        let _ = component
+            .create_response(
                 &ctx.http,
-                CreateInteractionResponseFollowup::new().embed(embed),
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    let custom_id = component.data.custom_id.as_str();
+    let mut parts = custom_id.splitn(2, ':');
+    let action = parts.next().unwrap_or("");
+    let session_id = parts.next().unwrap_or("");
+
+    let pending = match queue_mgr.get_pending_playlist(session_id).await {
+        Some(p) => p,
+        None => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    if component.user.id != pending.user_id {
+        let err_msg = fmt(get_lang().playlist_only_requester, &[&pending.requester_tag]);
+        let _ = component
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(err_msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    match action {
+        "playlist_cancel" => {
+            queue_mgr.remove_pending_playlist(session_id).await;
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::UpdateMessage(
+                        CreateInteractionResponseMessage::new()
+                            .content(get_lang().playlist_load_cancelled)
+                            .embeds(vec![])
+                            .components(vec![]),
+                    ),
+                )
+                .await;
+        }
+        "playlist_all" => {
+            queue_mgr.remove_pending_playlist(session_id).await;
+            let embed = enqueue_playlist_tracks(
+                ctx,
+                guild_id,
+                pending.channel_id,
+                source_mgr,
+                queue_mgr,
+                pending.tracks,
+                pending.play_next,
+                &pending.requester_tag,
+            )
+            .await;
+
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::UpdateMessage(
+                        CreateInteractionResponseMessage::new()
+                            .embed(embed)
+                            .components(vec![]),
+                    ),
+                )
+                .await;
+        }
+        "playlist_partial" => {
+            let total_tracks = pending.tracks.len();
+            let label = fmt(get_lang().playlist_modal_label, &[&total_tracks]);
+            let label_truncated: String = if label.chars().count() > 45 {
+                label.chars().take(45).collect()
+            } else {
+                label
+            };
+
+            let modal = CreateModal::new(
+                format!("playlist_modal:{}", session_id),
+                get_lang().playlist_modal_title,
+            )
+            .components(vec![CreateActionRow::InputText(
+                CreateInputText::new(
+                    InputTextStyle::Short,
+                    label_truncated,
+                    "playlist_count",
+                )
+                .placeholder(get_lang().playlist_modal_placeholder)
+                .min_length(1)
+                .max_length(5)
+                .required(true),
+            )]);
+
+            let _ = component
+                .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+                .await;
+        }
+        _ => {}
+    }
+}
+
+pub async fn handle_playlist_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    source_mgr: &Arc<SourceManager>,
+    queue_mgr: &Arc<QueueManager>,
+) {
+    let guild_id = match modal.guild_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    if let Err(msg) = crate::utils::voice::check_voice_channel(ctx, guild_id, modal.user.id) {
+        let _ = modal
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    let custom_id = modal.data.custom_id.as_str();
+    let session_id = custom_id.strip_prefix("playlist_modal:").unwrap_or("");
+
+    let pending = match queue_mgr.get_pending_playlist(session_id).await {
+        Some(p) => p,
+        None => {
+            let _ = modal
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(get_lang().selection_expired)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    if modal.user.id != pending.user_id {
+        let err_msg = fmt(get_lang().playlist_only_requester, &[&pending.requester_tag]);
+        let _ = modal
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(err_msg)
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
+    let total_tracks = pending.tracks.len();
+
+    let mut count_str = None;
+    for row in &modal.data.components {
+        for comp in &row.components {
+            if let serenity::all::ActionRowComponent::InputText(input) = comp {
+                if input.custom_id == "playlist_count" {
+                    count_str = input.value.clone();
+                }
+            }
+        }
+    }
+
+    let count = match count_str.as_deref().unwrap_or("").trim().parse::<usize>() {
+        Ok(n) if n > 0 => n.min(total_tracks),
+        _ => {
+            let err_msg = fmt(get_lang().playlist_invalid_count, &[&total_tracks]);
+            let _ = modal
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(err_msg)
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+            return;
+        }
+    };
+
+    queue_mgr.remove_pending_playlist(session_id).await;
+
+    let selected_tracks = pending.tracks[..count].to_vec();
+
+    let embed = enqueue_playlist_tracks(
+        ctx,
+        guild_id,
+        pending.channel_id,
+        source_mgr,
+        queue_mgr,
+        selected_tracks,
+        pending.play_next,
+        &pending.requester_tag,
+    )
+    .await;
+
+    let res = modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(embed.clone())
+                    .components(vec![]),
+            ),
+        )
+        .await;
+
+    if res.is_err() {
+        let _ = pending
+            .channel_id
+            .edit_message(
+                &ctx.http,
+                pending.message_id,
+                EditMessage::new().embed(embed).components(vec![]),
             )
             .await;
     }
+}
 }

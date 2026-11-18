@@ -1,7 +1,7 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId, GuildId, MessageId};
+use serenity::all::{ChannelId, GuildId, MessageId, UserId};
 use std::collections::{HashMap, VecDeque};
 use crate::lang::get_lang;
 use std::sync::Arc;
@@ -23,6 +23,19 @@ struct SearchEntry {
 pub struct RecommendEntry {
     pub tracks: Vec<TrackMetadata>,
     pub profile: crate::source::TasteProfile,
+}
+
+#[derive(Clone)]
+pub struct PendingPlaylist {
+    pub session_id: String,
+    pub guild_id: GuildId,
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    pub user_id: UserId,
+    pub requester_tag: String,
+    pub tracks: Vec<TrackMetadata>,
+    pub created_at: Instant,
+    pub play_next: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -110,6 +123,7 @@ pub struct QueueManager {
     last_messages: Arc<Mutex<HashMap<GuildId, MessageId>>>,
     search_results: Arc<Mutex<HashMap<MessageId, SearchEntry>>>,
     recommend_results: Arc<Mutex<HashMap<String, RecommendEntry>>>,
+    pending_playlists: Arc<Mutex<HashMap<String, PendingPlaylist>>>,
     /// Set right before a manual stop (e.g. jump) so the old track's
     /// TrackEndHandler does NOT advance/cycle the queue again. The first
     /// End event consumes it (with a short TTL safety net).
@@ -132,6 +146,7 @@ impl QueueManager {
             last_messages: Arc::new(Mutex::new(HashMap::new())),
             search_results: Arc::new(Mutex::new(HashMap::new())),
             recommend_results: Arc::new(Mutex::new(HashMap::new())),
+            pending_playlists: Arc::new(Mutex::new(HashMap::new())),
             playlist_store,
         }
     }
@@ -428,6 +443,24 @@ impl QueueManager {
         map.get(key).map(|e| e.tracks.clone())
     }
 
+    pub async fn set_pending_playlist(&self, session_id: String, entry: PendingPlaylist) {
+        let mut map = self.pending_playlists.lock().await;
+        map.retain(|_, e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS);
+        map.insert(session_id, entry);
+    }
+
+    pub async fn get_pending_playlist(&self, session_id: &str) -> Option<PendingPlaylist> {
+        let map = self.pending_playlists.lock().await;
+        map.get(session_id)
+            .filter(|e| e.created_at.elapsed().as_secs() < SEARCH_TTL_SECS)
+            .cloned()
+    }
+
+    pub async fn remove_pending_playlist(&self, session_id: &str) -> Option<PendingPlaylist> {
+        let mut map = self.pending_playlists.lock().await;
+        map.remove(session_id)
+    }
+
     pub async fn clear(&self, guild_id: GuildId) {
         let mut map = self.queues.lock().await;
         map.remove(&guild_id);
@@ -443,6 +476,8 @@ impl QueueManager {
         msg_map.remove(&guild_id);
         let mut sr_map = self.search_results.lock().await;
         sr_map.retain(|_, entry| entry.guild_id != guild_id);
+        let mut pl_map = self.pending_playlists.lock().await;
+        pl_map.retain(|_, entry| entry.guild_id != guild_id);
         let mut af_map = self.audio_filters.lock().await;
         af_map.remove(&guild_id);
         let mut ap_map = self.autoplay.lock().await;
