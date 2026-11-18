@@ -25,7 +25,7 @@ services:
       # NOW_PLAYING_BEHAVIOR=new → clean channel (replaces previous card)
       # NOW_PLAYING_BEHAVIOR=old → keep all cards in channel history
       - NOW_PLAYING_BEHAVIOR=${NOW_PLAYING_BEHAVIOR:-new}
-      - MAX_PLAYLIST_ITEMS=${MAX_PLAYLIST_ITEMS:-50}
+      - MAX_PLAYLIST_ITEMS=${MAX_PLAYLIST_ITEMS:-0}
 
       # ─ MongoDB (optional — defaults to local file storage when blank) ─
       # Fill values in .env to enable cloud-synced playlists.

@@ -101,14 +101,14 @@ impl SourceManager {
         &self.ai_client
     }
 
-    /// Reads MAX_PLAYLIST_ITEMS (or MAX_PLAYLIST_TRACKS) from .env. Defaults to 50.
+    /// Reads MAX_PLAYLIST_ITEMS (or MAX_PLAYLIST_TRACKS) from .env. Defaults to 0 (unlimited).
     /// Set to 0 for unlimited.
     pub fn get_max_playlist_limit() -> usize {
         std::env::var("MAX_PLAYLIST_ITEMS")
             .or_else(|_| std::env::var("MAX_PLAYLIST_TRACKS"))
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(50)
+            .unwrap_or(0)
     }
 
     /// Parses a jasmr.net watch URL into (rj_code, short_title, cv_name).
@@ -415,97 +415,137 @@ impl SourceManager {
                 }
             } else if item_type == "playlist" {
                 let max_items = Self::get_max_playlist_limit();
-                let limit = if max_items > 0 { max_items.min(100) } else { 100 };
-                let api_url = format!("https://api.spotify.com/v1/playlists/{}/tracks?limit={}", item_id, limit);
-                if let Ok(res) = self
-                    .http_client
-                    .get(&api_url)
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await
-                {
-                    if res.status().is_success() {
-                        if let Ok(json) = res.json::<serde_json::Value>().await {
-                            let mut tracks = Vec::new();
-                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
-                                for item in items {
-                                    let track_obj = item.get("track").unwrap_or(item);
-                                    let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                    if title.is_empty() { continue; }
-                                    let mut artists = Vec::new();
-                                    if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
-                                        for a in arr {
-                                            if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
-                                                artists.push(name.to_string());
-                                            }
-                                        }
-                                    }
-                                    let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
-                                    let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
-                                    let thumbnail = track_obj.pointer("/album/images/0/url").and_then(|u| u.as_str()).map(|s| s.to_string());
-                                    let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                                    let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+                let page_size = if max_items > 0 { max_items.min(100) } else { 100 };
+                let mut next_url = Some(format!(
+                    "https://api.spotify.com/v1/playlists/{}/tracks?limit={}",
+                    item_id, page_size
+                ));
+                let mut tracks = Vec::new();
 
-                                    tracks.push(SpotifyTrackInfo {
-                                        title,
-                                        artist,
-                                        url: t_url,
-                                        thumbnail,
-                                        duration,
-                                    });
+                while let Some(current_url) = next_url {
+                    if max_items > 0 && tracks.len() >= max_items {
+                        break;
+                    }
+
+                    let res = match self
+                        .http_client
+                        .get(&current_url)
+                        .header("Authorization", format!("Bearer {}", token))
+                        .send()
+                        .await
+                    {
+                        Ok(r) if r.status().is_success() => r,
+                        _ => break,
+                    };
+
+                    let json = match res.json::<serde_json::Value>().await {
+                        Ok(j) => j,
+                        Err(_) => break,
+                    };
+
+                    if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                        for item in items {
+                            if max_items > 0 && tracks.len() >= max_items {
+                                break;
+                            }
+                            let track_obj = item.get("track").unwrap_or(item);
+                            let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if title.is_empty() { continue; }
+                            let mut artists = Vec::new();
+                            if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
+                                for a in arr {
+                                    if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                        artists.push(name.to_string());
+                                    }
                                 }
                             }
-                            if !tracks.is_empty() {
-                                return Ok(tracks);
-                            }
+                            let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
+                            let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                            let thumbnail = track_obj.pointer("/album/images/0/url").and_then(|u| u.as_str()).map(|s| s.to_string());
+                            let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                            let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+
+                            tracks.push(SpotifyTrackInfo {
+                                title,
+                                artist,
+                                url: t_url,
+                                thumbnail,
+                                duration,
+                            });
                         }
                     }
+
+                    next_url = json.get("next").and_then(|n| n.as_str()).map(|s| s.to_string());
+                }
+
+                if !tracks.is_empty() {
+                    return Ok(tracks);
                 }
             } else if item_type == "album" {
                 let max_items = Self::get_max_playlist_limit();
-                let limit = if max_items > 0 { max_items.min(50) } else { 50 };
-                let api_url = format!("https://api.spotify.com/v1/albums/{}/tracks?limit={}", item_id, limit);
-                if let Ok(res) = self
-                    .http_client
-                    .get(&api_url)
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await
-                {
-                    if res.status().is_success() {
-                        if let Ok(json) = res.json::<serde_json::Value>().await {
-                            let mut tracks = Vec::new();
-                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
-                                for track_obj in items {
-                                    let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                    if title.is_empty() { continue; }
-                                    let mut artists = Vec::new();
-                                    if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
-                                        for a in arr {
-                                            if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
-                                                artists.push(name.to_string());
-                                            }
-                                        }
-                                    }
-                                    let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
-                                    let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
-                                    let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                                    let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+                let page_size = if max_items > 0 { max_items.min(50) } else { 50 };
+                let mut next_url = Some(format!(
+                    "https://api.spotify.com/v1/albums/{}/tracks?limit={}",
+                    item_id, page_size
+                ));
+                let mut tracks = Vec::new();
 
-                                    tracks.push(SpotifyTrackInfo {
-                                        title,
-                                        artist,
-                                        url: t_url,
-                                        thumbnail: None,
-                                        duration,
-                                    });
+                while let Some(current_url) = next_url {
+                    if max_items > 0 && tracks.len() >= max_items {
+                        break;
+                    }
+
+                    let res = match self
+                        .http_client
+                        .get(&current_url)
+                        .header("Authorization", format!("Bearer {}", token))
+                        .send()
+                        .await
+                    {
+                        Ok(r) if r.status().is_success() => r,
+                        _ => break,
+                    };
+
+                    let json = match res.json::<serde_json::Value>().await {
+                        Ok(j) => j,
+                        Err(_) => break,
+                    };
+
+                    if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                        for track_obj in items {
+                            if max_items > 0 && tracks.len() >= max_items {
+                                break;
+                            }
+                            let title = track_obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if title.is_empty() { continue; }
+                            let mut artists = Vec::new();
+                            if let Some(arr) = track_obj.get("artists").and_then(|a| a.as_array()) {
+                                for a in arr {
+                                    if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                        artists.push(name.to_string());
+                                    }
                                 }
                             }
-                            if !tracks.is_empty() {
-                                return Ok(tracks);
-                            }
+                            let artist = if artists.is_empty() { "Spotify Artist".to_string() } else { artists.join(", ") };
+                            let duration = track_obj.get("duration_ms").and_then(|d| d.as_u64()).map(Duration::from_millis);
+                            let tid = track_obj.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                            let t_url = if !tid.is_empty() { format!("https://open.spotify.com/track/{}", tid) } else { url.to_string() };
+
+                            tracks.push(SpotifyTrackInfo {
+                                title,
+                                artist,
+                                url: t_url,
+                                thumbnail: None,
+                                duration,
+                            });
                         }
                     }
+
+                    next_url = json.get("next").and_then(|n| n.as_str()).map(|s| s.to_string());
+                }
+
+                if !tracks.is_empty() {
+                    return Ok(tracks);
                 }
             }
         }
@@ -628,7 +668,7 @@ impl SourceManager {
     /// Resolves YouTube, SoundCloud, or direct URLs via yt-dlp.
     async fn resolve_single_query(&self, query: &str) -> Result<Vec<TrackMetadata>, String> {
         let is_url = query.starts_with("http://") || query.starts_with("https://");
-        let has_playlist = is_url && query.contains("list=");
+        let has_playlist = is_url && (query.contains("list=") || query.contains("/sets/"));
         let is_soundcloud = query.contains("soundcloud.com") || query.starts_with("scsearch");
 
         let source_hint = if is_soundcloud {
@@ -657,14 +697,14 @@ impl SourceManager {
 
         let target_for_cmd = search_target.clone();
         let output = tokio::time::timeout(
-            std::time::Duration::from_secs(45),
+            std::time::Duration::from_secs(90),
             tokio::task::spawn_blocking(move || {
                 let mut cmd = Command::new(&ytdlp_bin);
                 cmd.args([
                     "-J",
                     "--no-warnings",
                     "--socket-timeout",
-                    "10",
+                    "15",
                     "--retries",
                     "2",
                 ]);
@@ -694,7 +734,7 @@ impl SourceManager {
             }),
         )
         .await
-        .map_err(|_| "yt-dlp timed out after 45 seconds".to_string())?
+        .map_err(|_| "yt-dlp timed out after 90 seconds".to_string())?
         .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
